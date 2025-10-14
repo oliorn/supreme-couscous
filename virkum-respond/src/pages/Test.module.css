@@ -1,0 +1,12 @@
+.wrap { display: grid; grid-template-columns: 340px 1fr; gap: 16px; height: calc(100vh - 40px); }
+.listPane, .detailPane { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; overflow: hidden; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: calc(100% - 40px); overflow: auto; }
+.row, .rowActive { width: 100%; text-align: left; padding: 10px 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; }
+.row:hover { background: #eef2f7; }
+.rowActive { background: #e0f2fe; border-color: #bae6fd; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.checkRow { display: flex; align-items: center; gap: 8px; }
+.actions { display: flex; justify-content: flex-start; align-items: end; }
+.startBtn { background: #16a34a; color: white; border: 0; padding: 10px 14px; border-radius: 10px; }
+.startBtn:disabled { opacity: .7; }
+.logBox { margin-top: 16px; background: #0b1220; color: #cbd5e1; padding: 12px; border-radius: 10px; height: 220px; overflow: auto; }

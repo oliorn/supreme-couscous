@@ -39,6 +39,39 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [info, setInfo] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleScrape() {
+    if (!url) return alert("Please enter a URL");
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`http://localhost:4001/scrape?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // Populate fields using scraper results
+      setName(data.title || "");
+      setDescription(data.description || "");
+      setInfo(
+        [
+          `Favicon: ${data.favicon ?? "N/A"}`,
+          `Image: ${data.image ?? "N/A"}`,
+          `URL: ${data.url}`,
+        ].join("\n")
+      );
+    } catch (err) {
+      console.error(err);
+      setError("Failed to fetch site info. Please check the URL or backend.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <Modal title="Create a new company" onBack={onBack} onClose={onClose}>
@@ -46,29 +79,58 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
         <section className={styles.section}>
           <h4>Web scrape</h4>
           <div className={styles.scrapeRow}>
-            <Input label="URL" value={url} onChange={setUrl} placeholder="https://example.com" />
-            <button className={styles.scrapeBtn}>Start</button>
+            <Input
+              label="URL"
+              value={url}
+              onChange={setUrl}
+              placeholder="https://example.com"
+            />
+            <button
+              className={styles.scrapeBtn}
+              onClick={handleScrape}
+              disabled={loading}
+            >
+              {loading ? "Loading..." : "Start"}
+            </button>
           </div>
+          {error && <p className={styles.error}>{error}</p>}
         </section>
+
         <section className={styles.section}>
           <h4>Details</h4>
           <Input label="Company name" value={name} onChange={setName} />
           <label className={styles.textareaWrap}>
             <span>Company description</span>
-            <textarea value={description} onChange={(e)=>setDescription(e.target.value)} />
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </label>
           <label className={styles.textareaWrap}>
             <span>Company information</span>
-            <textarea value={info} onChange={(e)=>setInfo(e.target.value)} />
+            <textarea
+              value={info}
+              onChange={(e) => setInfo(e.target.value)}
+            />
           </label>
           <div className={styles.footerRight}>
-            <SaveIconButton onClick={() => onSave({ id: crypto.randomUUID(), name, description, info })} />
+            <SaveIconButton
+              onClick={() =>
+                onSave({
+                  id: crypto.randomUUID(),
+                  name,
+                  description,
+                  info,
+                })
+              }
+            />
           </div>
         </section>
       </div>
     </Modal>
   );
 }
+
 
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState(initial);

@@ -3,6 +3,7 @@ import styles from "./Companies.module.css";
 import Modal from "../components/Modal.js";
 import Input from "../components/Input.js";
 import SaveIconButton from "../components/SaveIconButton.js";
+import { scrapeWebsite } from "../api/scraper";
 
 const initial = [
   { id: "c1", name: "Company 1", description: "", info: "" },
@@ -14,20 +15,29 @@ function EditCompanyModal({ company, onSave, onClose }) {
   const [name, setName] = useState(company.name);
   const [description, setDescription] = useState(company.description ?? "");
   const [info, setInfo] = useState(company.info ?? "");
+
   return (
     <Modal title={`Edit ${company.name}`} onClose={onClose}>
       <div className={styles.formGrid}>
         <Input label="Company name" value={name} onChange={setName} />
         <label className={styles.textareaWrap}>
           <span>Company description</span>
-          <textarea value={description} onChange={(e)=>setDescription(e.target.value)} />
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
         </label>
         <label className={styles.textareaWrap}>
           <span>Company information</span>
-          <textarea value={info} onChange={(e)=>setInfo(e.target.value)} />
+          <textarea
+            value={info}
+            onChange={(e) => setInfo(e.target.value)}
+          />
         </label>
         <div className={styles.footerRight}>
-          <SaveIconButton onClick={() => onSave({ ...company, name, description, info })} />
+          <SaveIconButton
+            onClick={() => onSave({ ...company, name, description, info })}
+          />
         </div>
       </div>
     </Modal>
@@ -42,32 +52,20 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // ✅ Uses the new scraper API helper
   async function handleScrape() {
-    if (!url) return alert("Please enter a URL");
+    if (!url.trim()) return alert("Please enter a URL first");
     setLoading(true);
     setError("");
 
     try {
-      const res = await fetch(`http://localhost:4001/scrape?url=${encodeURIComponent(url)}`);
-      const data = await res.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      // Populate fields using scraper results
-      setName(data.title || "");
-      setDescription(data.description || "");
-      setInfo(
-        [
-          `Favicon: ${data.favicon ?? "N/A"}`,
-          `Image: ${data.image ?? "N/A"}`,
-          `URL: ${data.url}`,
-        ].join("\n")
-      );
+      const data = await scrapeWebsite(url);
+      setName(data.company_name || "");
+      setDescription(data.company_description || "");
+      setInfo(data.company_information || "");
     } catch (err) {
       console.error(err);
-      setError("Failed to fetch site info. Please check the URL or backend.");
+      setError("❌ Failed to scrape website. Please check the backend or URL.");
     } finally {
       setLoading(false);
     }
@@ -131,7 +129,6 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
   );
 }
 
-
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState(initial);
   const [editing, setEditing] = useState(null);
@@ -154,23 +151,64 @@ export default function CompaniesPage() {
         {companies.map((c) => (
           <li key={c.id} className={styles.row}>
             <span>{c.name}</span>
-            <button className={styles.editBtn} onClick={() => setEditing(c)} title="Edit">
+            <button
+              className={styles.editBtn}
+              onClick={() => setEditing(c)}
+              title="Edit"
+            >
               {/* Pen icon */}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+              </svg>
             </button>
           </li>
         ))}
       </ul>
 
-      <button className={styles.plusFloat} onClick={() => setCreating(true)} aria-label="Create company" title="Create company">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <button
+        className={styles.plusFloat}
+        onClick={() => setCreating(true)}
+        aria-label="Create company"
+        title="Create company"
+      >
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
       </button>
 
       {editing && (
-        <EditCompanyModal company={editing} onSave={saveEdited} onClose={() => setEditing(null)} />
+        <EditCompanyModal
+          company={editing}
+          onSave={saveEdited}
+          onClose={() => setEditing(null)}
+        />
       )}
       {creating && (
-        <CreateCompanyModal onSave={saveCreated} onClose={() => setCreating(false)} onBack={() => setCreating(false)} />
+        <CreateCompanyModal
+          onSave={saveCreated}
+          onClose={() => setCreating(false)}
+          onBack={() => setCreating(false)}
+        />
       )}
     </div>
   );

@@ -5,8 +5,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
-BASE_DIR = Path(__file__).resolve().parent
+# Get the project root directory (3 levels up from this file)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
+# Load .env from project root
 load_dotenv(BASE_DIR / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")

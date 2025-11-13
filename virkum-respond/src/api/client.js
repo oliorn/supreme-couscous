@@ -1,8 +1,8 @@
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://localhost:4001";
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:8000";
 
 export async function apiFetch(endpoint, options = {}) {
-    const url = `${API_BASE_URL}${endpoint}`;
+    const url = `${API_BASE}${endpoint}`;
     const res = await fetch(url, {
         ...options,
         headers: {

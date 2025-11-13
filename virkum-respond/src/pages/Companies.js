@@ -54,22 +54,28 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
 
   // ✅ Uses the new scraper API helper
   async function handleScrape() {
-    if (!url.trim()) return alert("Please enter a URL first");
-    setLoading(true);
-    setError("");
+  if (!url.trim()) return alert("Please enter a URL first");
+  setLoading(true);
+  setError("");
 
-    try {
-      const data = await scrapeWebsite(url);
-      setName(data.company_name || "");
-      setDescription(data.company_description || "");
-      setInfo(data.company_information || "");
-    } catch (err) {
-      console.error(err);
-      setError("❌ Failed to scrape website. Please check the backend or URL.");
-    } finally {
-      setLoading(false);
-    }
+  try {
+    const data = await scrapeWebsite(url);
+    const scraped = data.scraped || data;
+
+    // DEBUG 
+    console.log("SCRAPED FROM BACKEND:", scraped);
+
+    setName(scraped.company_name || "");
+    setDescription(scraped.company_description || "");
+    setInfo(scraped.company_information || "");
+  } catch (err) {
+    console.error(err);
+    setError("❌ Failed to scrape website. Please check the backend or URL.");
+  } finally {
+    setLoading(false);
   }
+}
+
 
   return (
     <Modal title="Create a new company" onBack={onBack} onClose={onClose}>

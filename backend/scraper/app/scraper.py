@@ -3,6 +3,9 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 def scrape_company(url: str):
+    # Auto fix á missing http
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
     """Scrape basic company information from a website."""
     try:
         response = requests.get(url, timeout=10)

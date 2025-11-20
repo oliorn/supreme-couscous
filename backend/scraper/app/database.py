@@ -5,8 +5,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
-# Get the project root directory (3 levels up from this file)
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+# Get the project root directory need to move the .env
+BASE_DIR = Path(__file__).resolve().parent
 
 # Load .env from project root
 load_dotenv(BASE_DIR / ".env")
@@ -18,3 +18,6 @@ if not DATABASE_URL:
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+

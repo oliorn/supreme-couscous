@@ -1,12 +1,326 @@
-.wrap { display: grid; grid-template-columns: 340px 1fr; gap: 16px; height: calc(100vh - 40px); }
-.listPane, .detailPane { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; overflow: hidden; }
-.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: calc(100% - 40px); overflow: auto; }
-.row, .rowActive { width: 100%; text-align: left; padding: 10px 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; }
-.row:hover { background: #eef2f7; }
-.rowActive { background: #e0f2fe; border-color: #bae6fd; }
-.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.checkRow { display: flex; align-items: center; gap: 8px; }
-.actions { display: flex; justify-content: flex-start; align-items: end; }
-.startBtn { background: #16a34a; color: white; border: 0; padding: 10px 14px; border-radius: 10px; }
-.startBtn:disabled { opacity: .7; }
-.logBox { margin-top: 16px; background: #0b1220; color: #cbd5e1; padding: 12px; border-radius: 10px; height: 220px; overflow: auto; }
+.wrap { 
+  display: grid; 
+  grid-template-columns: 340px 1fr; 
+  gap: 16px; 
+  height: calc(100vh - 40px); 
+}
+
+.listPane { 
+  background: white; 
+  border: 1px solid #e5e7eb; 
+  border-radius: 12px; 
+  padding: 12px; 
+  overflow: hidden; 
+}
+
+.detailPane { 
+  background: white; 
+  border: 1px solid #e5e7eb; 
+  border-radius: 12px; 
+  padding: 12px; 
+  overflow-y: auto; /* Changed from hidden to auto for vertical scrolling */
+  display: flex;
+  flex-direction: column;
+}
+
+.list { 
+  list-style: none; 
+  margin: 0; 
+  padding: 0; 
+  display: grid; 
+  gap: 8px; 
+  max-height: calc(100% - 40px); 
+  overflow: auto; 
+}
+
+.row, .rowActive { 
+  width: 100%; 
+  text-align: left; 
+  padding: 10px 12px; 
+  background: #f8fafc; 
+  border: 1px solid #e5e7eb; 
+  border-radius: 10px; 
+  cursor: pointer;
+}
+
+.row:hover { 
+  background: #eef2f7; 
+}
+
+.rowActive { 
+  background: #e0f2fe; 
+  border-color: #bae6fd; 
+}
+
+.grid { 
+  display: grid; 
+  grid-template-columns: repeat(2, minmax(0, 1fr)); 
+  gap: 12px; 
+}
+
+.checkRow { 
+  display: flex; 
+  align-items: center; 
+  gap: 8px; 
+}
+
+.actions { 
+  display: flex; 
+  justify-content: flex-start; 
+  align-items: end; 
+}
+
+.startBtn { 
+  background: #16a34a; 
+  color: white; 
+  border: 0; 
+  padding: 10px 14px; 
+  border-radius: 10px; 
+  cursor: pointer;
+}
+
+.startBtn:hover:not(:disabled) {
+  background: #15803d;
+}
+
+.startBtn:disabled { 
+  opacity: .7; 
+  cursor: not-allowed;
+}
+
+.logBox { 
+  margin-top: 16px; 
+  background: #0b1220; 
+  color: #cbd5e1; 
+  padding: 12px; 
+  border-radius: 10px; 
+  height: 220px; 
+  overflow: auto; 
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+}
+
+.logBox pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* New Styles for Enhanced Features */
+
+.companyInfo {
+  background: #f0f9ff;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  border-left: 4px solid #0ea5e9;
+}
+
+.companyInfo h4 {
+  margin: 0 0 8px 0;
+  color: #0369a1;
+}
+
+.companyInfo p {
+  margin: 4px 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.apiKeySection {
+  margin-bottom: 16px;
+}
+
+.helperText {
+  color: #64748b;
+  font-style: italic;
+  font-size: 12px;
+  margin-top: 4px;
+  display: block;
+}
+
+.section {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.section h4 {
+  margin: 0 0 12px 0;
+  color: #1f2937;
+}
+
+.mockEmailSection {
+  display: grid;
+  gap: 12px;
+}
+
+.textareaWrap {
+  display: grid;
+  gap: 6px;
+}
+
+.textareaWrap span {
+  font-weight: 500;
+  color: #374151;
+  font-size: 14px;
+}
+
+.textareaWrap textarea {
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.textareaWrap textarea:focus {
+  outline: none;
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+}
+
+.responseActions {
+  display: flex;
+  gap: 8px;
+}
+
+.respondBtn {
+  background: #16a34a;
+  color: white;
+  border: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.respondBtn:hover:not(:disabled) {
+  background: #15803d;
+}
+
+.respondBtn:disabled {
+  opacity: .7;
+  cursor: not-allowed;
+}
+
+.clearBtn {
+  background: #6b7280;
+  color: white;
+  border: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.clearBtn:hover:not(:disabled) {
+  background: #4b5563;
+}
+
+.clearBtn:disabled {
+  opacity: .7;
+  cursor: not-allowed;
+}
+
+.responseOutput {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+}
+
+.responseOutput h5 {
+  margin: 0 0 8px 0;
+  color: #166534;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.responseContent {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 14px;
+  color: #1f2937;
+}
+
+/* Loading states */
+.loadingText {
+  color: #6b7280;
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+
+.emptyState {
+  color: #6b7280;
+  text-align: center;
+  padding: 20px;
+  font-style: italic;
+}
+
+/* Scrollbar styling */
+.list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.list::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 3px;
+}
+
+.list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.detailPane::-webkit-scrollbar {
+  width: 8px;
+}
+
+.detailPane::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.detailPane::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.detailPane::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.logBox::-webkit-scrollbar {
+  width: 8px;
+}
+
+.logBox::-webkit-scrollbar-track {
+  background: #1e293b;
+  border-radius: 4px;
+}
+
+.logBox::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+
+.logBox::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Content container for flexible scrolling */
+.contentContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: min-content; /* Allows content to determine height */
+}

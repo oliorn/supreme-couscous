@@ -5,7 +5,6 @@ import Input from "../components/Input.js";
 import SaveIconButton from "../components/SaveIconButton.js";
 import { scrapeWebsite, fetchCompanies } from "../api/scraper";
 
-
 function EditCompanyModal({ company, onSave, onClose }) {
   const [name, setName] = useState(company.name);
   const [description, setDescription] = useState(company.description ?? "");
@@ -39,38 +38,81 @@ function EditCompanyModal({ company, onSave, onClose }) {
   );
 }
 
-function CreateCompanyModal({ onSave, onClose, onBack }) {
+function CreateCompanyModal({ onSave, onClose, onBack, existingCompanies }) {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [duplicateWarning, setDuplicateWarning] = useState("");
 
-  // ✅ Uses the new scraper API helper
+  // Check for duplicates when name changes
+  useEffect(() => {
+    if (name.trim()) {
+      const isDuplicate = existingCompanies.some(
+        company => company.name.toLowerCase() === name.toLowerCase()
+      );
+      setDuplicateWarning(
+        isDuplicate ? "⚠️ A company with this name already exists" : ""
+      );
+    } else {
+      setDuplicateWarning("");
+    }
+  }, [name, existingCompanies]);
+
   async function handleScrape() {
-  if (!url.trim()) return alert("Please enter a URL first");
-  setLoading(true);
-  setError("");
+    if (!url.trim()) return alert("Please enter a URL first");
+    setLoading(true);
+    setError("");
+    setDuplicateWarning("");
 
-  try {
-    const data = await scrapeWebsite(url);
-    const scraped = data.scraped || data;
+    try {
+      const data = await scrapeWebsite(url);
+      const scraped = data.scraped || data;
 
-    // DEBUG 
-    console.log("SCRAPED FROM BACKEND:", scraped);
+      console.log("SCRAPED FROM BACKEND:", scraped);
 
-    setName(scraped.company_name || "");
-    setDescription(scraped.company_description || "");
-    setInfo(scraped.company_information || "");
-  } catch (err) {
-    console.error(err);
-    setError("❌ Failed to scrape website. Please check the backend or URL.");
-  } finally {
-    setLoading(false);
+      const companyName = scraped.company_name || "";
+      
+      // Check for duplicates
+      const isDuplicate = existingCompanies.some(
+        company => company.name.toLowerCase() === companyName.toLowerCase()
+      );
+      
+      if (isDuplicate) {
+        setDuplicateWarning("⚠️ This company already exists in the database");
+      }
+
+      setName(companyName);
+      setDescription(scraped.company_description || "");
+      setInfo(scraped.company_information || "");
+    } catch (err) {
+      console.error(err);
+      setError("❌ Failed to scrape website. Please check the backend or URL.");
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
+  function handleSave() {
+    if (duplicateWarning) {
+      setError("Cannot save: Company already exists");
+      return;
+    }
+    
+    if (!name.trim()) {
+      setError("Company name is required");
+      return;
+    }
+    
+    onSave({
+      id: crypto.randomUUID(),
+      name,
+      description,
+      info,
+    });
+  }
 
   return (
     <Modal title="Create a new company" onBack={onBack} onClose={onClose}>
@@ -97,7 +139,13 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
 
         <section className={styles.section}>
           <h4>Details</h4>
-          <Input label="Company name" value={name} onChange={setName} />
+          <Input 
+            label="Company name" 
+            value={name} 
+            onChange={setName} 
+          />
+          {duplicateWarning && <p style={{color: 'orange', margin: '0', fontSize: '14px'}}>{duplicateWarning}</p>}
+          
           <label className={styles.textareaWrap}>
             <span>Company description</span>
             <textarea
@@ -114,14 +162,8 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
           </label>
           <div className={styles.footerRight}>
             <SaveIconButton
-              onClick={() =>
-                onSave({
-                  id: crypto.randomUUID(),
-                  name,
-                  description,
-                  info,
-                })
-              }
+              onClick={handleSave}
+              disabled={!!duplicateWarning || !name.trim()}
             />
           </div>
         </section>
@@ -131,13 +173,13 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
 }
 
 export default function CompaniesPage() {
-  const [companies, setCompanies] = useState([]);        // 🔹 start empty
+  const [companies, setCompanies] = useState([]);
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [loading, setLoading] = useState(false);         // 🔹 NEW
-  const [error, setError] = useState("");               // 🔹 NEW
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  // 🔹 Load from backend when the page mounts
+  // Load from backend when the page mounts
   useEffect(() => {
     async function loadCompanies() {
       try {
@@ -145,11 +187,12 @@ export default function CompaniesPage() {
         setError("");
 
         const data = await fetchCompanies();
-        // data is whatever your FastAPI /companies returns.
-        // assuming backend returns:
-        // [{ CompanyName, CompanyDescription, CompanyInfo }, ...]
-        const mapped = data.map((c, index) => ({
-          id: c.id ?? String(index), // use DB id if you have it
+        
+        // Client-side duplicate removal as backup
+        const uniqueCompanies = removeDuplicates(data);
+        
+        const mapped = uniqueCompanies.map((c, index) => ({
+          id: c.id ?? String(index),
           name: c.CompanyName,
           description: c.CompanyDescription,
           info: c.CompanyInfo,
@@ -167,13 +210,24 @@ export default function CompaniesPage() {
     loadCompanies();
   }, []);
 
+  // Helper function to remove duplicates client-side
+  function removeDuplicates(companies) {
+    const seen = new Set();
+    return companies.filter(company => {
+      const name = company.CompanyName?.toLowerCase().trim();
+      if (!name || seen.has(name)) {
+        return false;
+      }
+      seen.add(name);
+      return true;
+    });
+  }
+
   function saveEdited(updated) {
     setCompanies((arr) => arr.map((c) => (c.id === updated.id ? updated : c)));
     setEditing(null);
   }
 
-  // For now this still only updates local state.
-  // (The actual saving to DB happens when you scrape, since /scrape writes to DB.)
   function saveCreated(newCompany) {
     setCompanies((arr) => [...arr, newCompany]);
     setCreating(false);
@@ -195,7 +249,8 @@ export default function CompaniesPage() {
               onClick={() => setEditing(c)}
               title="Edit"
             >
-              {/* Pen icon ... */}
+              {/* Pen icon - you can add your icon here */}
+              ✏️
             </button>
           </li>
         ))}
@@ -211,7 +266,8 @@ export default function CompaniesPage() {
         aria-label="Create company"
         title="Create company"
       >
-        {/* plus icon ... */}
+        {/* Plus icon - you can add your icon here */}
+        +
       </button>
 
       {editing && (
@@ -226,6 +282,7 @@ export default function CompaniesPage() {
           onSave={saveCreated}
           onClose={() => setCreating(false)}
           onBack={() => setCreating(false)}
+          existingCompanies={companies}
         />
       )}
     </div>

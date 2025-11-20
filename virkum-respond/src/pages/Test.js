@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import styles from "./Test.module.css";
 import Input from "../components/Input.js";
+import { generateEmail } from "../api/llm";
 
 const seedCompanies = [
   { id: "c1", name: "Company 1" },
@@ -22,39 +23,22 @@ export default function TestPage() {
   const [openaiKey, setOpenaiKey] = useState("");
 
   async function generateEmailWithOpenAI(company) {
-    if (!openaiKey) {
-      throw new Error("OpenAI API key is required");
-    }
+  // Backend sér alfarið um OpenAI/Gemini API lykla og módel.
+  // Hér köllum við bara á FastAPI /llm/generate-email endapunktinn.
 
-    const prompt = `Generate a business email about ${company.name}. The email should be professional but slightly informal, about 2-3 paragraphs long.`;
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openaiKey}`,
-        'Content-Type': 'application/json',
-      },
+    const response = await apiFetch("/llm/generate-email", {
+      method: "POST",
       body: JSON.stringify({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        max_tokens: 500,
-        temperature: 0.7,
+        company_name: company.name,
+        topic: "test email",   // getur verið dynamic síðar
+        // þú getur líka sent t.d. language/tone ef backend styður það
       }),
     });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`OpenAI API error: ${errorData.error?.message || 'Unknown error'}`);
-    }
-
-    const data = await response.json();
-    return data.choices[0].message.content;
+  // response er JSON sem backend skilgreinir sem { email: "..." }
+  return response.email;
   }
+
 
   async function startTest() {
     if (running || !selected) return;
@@ -67,12 +51,10 @@ export default function TestPage() {
       addToLog(`Emails to generate: ${emailCount}`);
       addToLog(`Concurrency: ${concurrency}`);
       addToLog("---");
-      
-      if (!openaiKey) {
-        throw new Error("Please enter your OpenAI API key first");
-      }
 
-      // Generate emails with OpenAI
+      // Engin openaiKey-check lengur – backend sér um lykla
+
+      // Generate emails through backend LLM endpoint
       for (let i = 1; i <= emailCount; i++) {
         addToLog(`Generating email ${i}/${emailCount}...`);
         
@@ -95,11 +77,12 @@ export default function TestPage() {
       
     } catch (error) {
       addToLog(`Error: ${error.message}`);
-      addToLog("Make sure your OpenAI API key is valid and has credits");
+      addToLog("Backend /llm/generate-email might be misconfigured or API key missing");
     } finally {
       setRunning(false);
     }
   }
+
 
   function addToLog(message) {
     if (logEnabled) {

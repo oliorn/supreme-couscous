@@ -9,3 +9,4 @@ export async function scrapeWebsite(url) {
 export async function fetchCompanies() {
   return apiFetch("/companies");
 }
+

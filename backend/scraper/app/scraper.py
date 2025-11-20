@@ -2,7 +2,14 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
+def normalize_url(url: str) -> str:
+    # ef notandinn skrifar bara "visir.is" þá bætum við https:// fyrir framan
+    if not url.startswith("http://") and not url.startswith("https://"):
+        return "https://" + url
+    return url
+
 def scrape_company(url: str):
+    url = normalize_url(url)
     """Scrape basic company information from a website."""
     try:
         response = requests.get(url, timeout=10)

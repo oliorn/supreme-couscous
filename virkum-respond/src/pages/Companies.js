@@ -1,15 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import styles from "./Companies.module.css";
 import Modal from "../components/Modal.js";
 import Input from "../components/Input.js";
 import SaveIconButton from "../components/SaveIconButton.js";
-import { scrapeWebsite } from "../api/scraper";
+import { scrapeWebsite, fetchCompanies } from "../api/scraper";
 
-const initial = [
-  { id: "c1", name: "Company 1", description: "", info: "" },
-  { id: "c2", name: "Company 2", description: "", info: "" },
-  { id: "c3", name: "Company 3", description: "", info: "" },
-];
 
 function EditCompanyModal({ company, onSave, onClose }) {
   const [name, setName] = useState(company.name);
@@ -136,15 +131,49 @@ function CreateCompanyModal({ onSave, onClose, onBack }) {
 }
 
 export default function CompaniesPage() {
-  const [companies, setCompanies] = useState(initial);
+  const [companies, setCompanies] = useState([]);        // 🔹 start empty
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [loading, setLoading] = useState(false);         // 🔹 NEW
+  const [error, setError] = useState("");               // 🔹 NEW
+
+  // 🔹 Load from backend when the page mounts
+  useEffect(() => {
+    async function loadCompanies() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const data = await fetchCompanies();
+        // data is whatever your FastAPI /companies returns.
+        // assuming backend returns:
+        // [{ CompanyName, CompanyDescription, CompanyInfo }, ...]
+        const mapped = data.map((c, index) => ({
+          id: c.id ?? String(index), // use DB id if you have it
+          name: c.CompanyName,
+          description: c.CompanyDescription,
+          info: c.CompanyInfo,
+        }));
+
+        setCompanies(mapped);
+      } catch (err) {
+        console.error(err);
+        setError("Failed to load companies from server");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadCompanies();
+  }, []);
 
   function saveEdited(updated) {
     setCompanies((arr) => arr.map((c) => (c.id === updated.id ? updated : c)));
     setEditing(null);
   }
 
+  // For now this still only updates local state.
+  // (The actual saving to DB happens when you scrape, since /scrape writes to DB.)
   function saveCreated(newCompany) {
     setCompanies((arr) => [...arr, newCompany]);
     setCreating(false);
@@ -153,6 +182,10 @@ export default function CompaniesPage() {
   return (
     <div className={styles.wrap}>
       <h2>Companies</h2>
+
+      {loading && <p>Loading companies...</p>}
+      {error && <p className={styles.error}>{error}</p>}
+
       <ul className={styles.list}>
         {companies.map((c) => (
           <li key={c.id} className={styles.row}>
@@ -162,24 +195,15 @@ export default function CompaniesPage() {
               onClick={() => setEditing(c)}
               title="Edit"
             >
-              {/* Pen icon */}
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M12 20h9" />
-                <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-              </svg>
+              {/* Pen icon ... */}
             </button>
           </li>
         ))}
       </ul>
+
+      {!loading && !error && companies.length === 0 && (
+        <p>No companies in database yet.</p>
+      )}
 
       <button
         className={styles.plusFloat}
@@ -187,19 +211,7 @@ export default function CompaniesPage() {
         aria-label="Create company"
         title="Create company"
       >
-        <svg
-          width="22"
-          height="22"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
+        {/* plus icon ... */}
       </button>
 
       {editing && (

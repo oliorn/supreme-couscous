@@ -24,6 +24,65 @@ export default function TestPage() {
   const [emailResponse, setEmailResponse] = useState("");
   const [generatingResponse, setGeneratingResponse] = useState(false);
 
+  // Helper function to detect if email is for a different company
+  function appearsToBeForOtherCompany(emailText, companyName) {
+    const emailLower = emailText.toLowerCase();
+    const companyNameLower = companyName.toLowerCase();
+    
+    // List of common greetings that indicate the intended recipient
+    const recipientGreetings = [
+      "dear", "to", "hello", "hi", "greetings", "attn:", "attention:",
+      "for the attention of", "re:", "subject:", "query for"
+    ];
+    
+    // Common company names to check for
+    const commonCompanies = [
+      "youtube", "google", "netflix", "amazon", "apple", "microsoft",
+      "facebook", "twitter", "instagram", "linkedin", "spotify",
+      "uber", "airbnb", "tesla", "nike", "adidas", "starbucks"
+    ];
+    
+    // Check if email mentions a different company in greeting/salutation
+    for (const greeting of recipientGreetings) {
+      for (const company of commonCompanies) {
+        if (company === companyNameLower) continue; // Skip if it's our own company
+        
+        const pattern1 = `${greeting} ${company}`;
+        const pattern2 = `${greeting} ${company} team`;
+        const pattern3 = `${greeting} ${company} support`;
+        const pattern4 = `${greeting} ${company} customer service`;
+        
+        if (emailLower.includes(pattern1) || 
+            emailLower.includes(pattern2) || 
+            emailLower.includes(pattern3) || 
+            emailLower.includes(pattern4)) {
+          return true;
+        }
+      }
+    }
+    
+    // Check for phrases like "I'm contacting YouTube about..."
+    for (const company of commonCompanies) {
+      if (company === companyNameLower) continue;
+      
+      const patterns = [
+        `contacting ${company}`,
+        `writing to ${company}`,
+        `emailing ${company}`,
+        `reaching out to ${company}`,
+        `${company} account`,
+        `${company} service`,
+        `${company} platform`
+      ];
+      
+      if (patterns.some(pattern => emailLower.includes(pattern))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
   // Load companies from database
   useEffect(() => {
     async function loadCompanies() {
@@ -60,9 +119,32 @@ export default function TestPage() {
 
     let prompt;
     if (context) {
-      // Generate response to mock email
-      prompt = `You are a representative from ${company.name}. 
+      // Check if email appears to be directed at a different company
+      const isForOtherCompany = appearsToBeForOtherCompany(context, company.name);
       
+      if (isForOtherCompany) {
+        prompt = `You are a representative from ${company.name}. 
+
+Company Information:
+- Description: ${company.description || "Not specified"}
+- About: ${company.info || "Not specified"}
+
+You received the following email, but it appears to be intended for a different company or service. Please write a polite, professional response that:
+
+1. Acknowledges the email was received
+2. Gently points out that it seems to be directed at another company/service
+3. Explains that you cannot help with this specific inquiry
+4. Offers to assist with matters relevant to ${company.name}
+5. Maintains a friendly, helpful tone
+
+EMAIL TO RESPOND TO:
+${context}
+
+Please write a diplomatic response that helps the sender while clarifying the misunderstanding.`;
+      } else {
+        // Generate normal response to mock email
+        prompt = `You are a representative from ${company.name}. 
+        
 Company Information:
 - Description: ${company.description || "Not specified"}
 - About: ${company.info || "Not specified"}
@@ -73,6 +155,7 @@ EMAIL TO RESPOND TO:
 ${context}
 
 Please write an appropriate response that reflects the company's professionalism and values.`;
+      }
     } else {
       // Generate initial outreach email
       prompt = `Generate a business outreach email from ${company.name}. 
@@ -159,7 +242,7 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
     }
   }
 
-  // generate response to mock email
+  // New function to generate response to mock email
   async function generateEmailResponse() {
     if (!selected || !mockEmail.trim()) {
       alert("Please select a company and enter a mock email first");
@@ -178,6 +261,12 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
       const response = await generateEmailWithOpenAI(selected, mockEmail);
       setEmailResponse(response);
       addToLog(`Generated response for ${selected.name} to mock email`);
+      
+      // Check if it was detected as wrong company
+      const isForOtherCompany = appearsToBeForOtherCompany(mockEmail, selected.name);
+      if (isForOtherCompany) {
+        addToLog(`Note: Email appears to be directed at a different company. Response will clarify this.`);
+      }
     } catch (error) {
       console.error("Error generating response:", error);
       setEmailResponse(`Error: ${error.message}`);

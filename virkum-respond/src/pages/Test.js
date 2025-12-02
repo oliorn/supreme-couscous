@@ -12,40 +12,39 @@ export default function TestPage() {
     companies.find(c => c.id === selectedId), [companies, selectedId]
   );
 
-  const [emailCount, setEmailCount] = useState(5);
-  const [concurrency, setConcurrency] = useState(2);
   const [logEnabled, setLogEnabled] = useState(true);
   const [log, setLog] = useState("");
   const [running, setRunning] = useState(false);
   const [openaiKey, setOpenaiKey] = useState("");
   
-  // New state for email response feature
+  // State for email response feature
   const [mockEmail, setMockEmail] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
   const [emailResponse, setEmailResponse] = useState("");
   const [generatingResponse, setGeneratingResponse] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [autoSend, setAutoSend] = useState(true);
 
   // Helper function to detect if email is for a different company
   function appearsToBeForOtherCompany(emailText, companyName) {
     const emailLower = emailText.toLowerCase();
     const companyNameLower = companyName.toLowerCase();
     
-    // List of common greetings that indicate the intended recipient
     const recipientGreetings = [
       "dear", "to", "hello", "hi", "greetings", "attn:", "attention:",
       "for the attention of", "re:", "subject:", "query for"
     ];
     
-    // Common company names to check for
     const commonCompanies = [
       "youtube", "google", "netflix", "amazon", "apple", "microsoft",
       "facebook", "twitter", "instagram", "linkedin", "spotify",
       "uber", "airbnb", "tesla", "nike", "adidas", "starbucks"
     ];
     
-    // Check if email mentions a different company in greeting/salutation
     for (const greeting of recipientGreetings) {
       for (const company of commonCompanies) {
-        if (company === companyNameLower) continue; // Skip if it's our own company
+        if (company === companyNameLower) continue;
         
         const pattern1 = `${greeting} ${company}`;
         const pattern2 = `${greeting} ${company} team`;
@@ -61,7 +60,6 @@ export default function TestPage() {
       }
     }
     
-    // Check for phrases like "I'm contacting YouTube about..."
     for (const company of commonCompanies) {
       if (company === companyNameLower) continue;
       
@@ -81,6 +79,39 @@ export default function TestPage() {
     }
     
     return false;
+  }
+
+  // Function to extract subject from mock email
+  function extractSubjectFromMockEmail(emailText) {
+    if (!emailText) return "";
+    
+    // Look for common subject patterns
+    const lines = emailText.split('\n');
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const line = lines[i].trim();
+      
+      // Check for "Subject:" pattern
+      if (line.toLowerCase().startsWith('subject:')) {
+        return line.substring(8).trim();
+      }
+      
+      // Check for "Re:" pattern (reply)
+      if (line.toLowerCase().startsWith('re:')) {
+        return line.trim();
+      }
+      
+      // Check for lines that look like subjects (not too long, not greetings)
+      if (line.length > 0 && line.length < 100 && 
+          !line.toLowerCase().includes('dear') &&
+          !line.toLowerCase().includes('hello') &&
+          !line.toLowerCase().includes('hi ') &&
+          !line.toLowerCase().includes('to ') &&
+          !line.toLowerCase().includes('attn:')) {
+        return line;
+      }
+    }
+    
+    return "";
   }
 
   // Load companies from database
@@ -112,6 +143,21 @@ export default function TestPage() {
     loadCompanies();
   }, []);
 
+  // Auto-extract subject when mock email changes
+  useEffect(() => {
+    if (mockEmail.trim()) {
+      const extractedSubject = extractSubjectFromMockEmail(mockEmail);
+      if (extractedSubject) {
+        setEmailSubject(extractedSubject);
+      } else {
+        // Generate a default subject
+        setEmailSubject(`Regarding your message`);
+      }
+    } else {
+      setEmailSubject("");
+    }
+  }, [mockEmail]);
+
   async function generateEmailWithOpenAI(company, context = null) {
     if (!openaiKey) {
       throw new Error("OpenAI API key is required");
@@ -119,15 +165,10 @@ export default function TestPage() {
 
     let prompt;
     if (context) {
-      // Check if email appears to be directed at a different company
       const isForOtherCompany = appearsToBeForOtherCompany(context, company.name);
       
       if (isForOtherCompany) {
         prompt = `You are a representative from ${company.name}. 
-
-Company Information:
-- Description: ${company.description || "Not specified"}
-- About: ${company.info || "Not specified"}
 
 You received the following email, but it appears to be intended for a different company or service. Please write a polite, professional response that:
 
@@ -137,19 +178,30 @@ You received the following email, but it appears to be intended for a different 
 4. Offers to assist with matters relevant to ${company.name}
 5. Maintains a friendly, helpful tone
 
+IMPORTANT: 
+- Do NOT use placeholders like [Your Name], [Your Company Name], [Your Title], etc.
+- Do NOT include company description or "Company Information" sections in the email
+- If you need to sign the email, use a professional signature like "Best regards" or "Sincerely"
+- Write as if you are an actual employee of ${company.name}
+- The response should be natural and human-like, not formulaic
+- Only write the email body, no subject line needed
+
 EMAIL TO RESPOND TO:
 ${context}
 
 Please write a diplomatic response that helps the sender while clarifying the misunderstanding.`;
       } else {
-        // Generate normal response to mock email
         prompt = `You are a representative from ${company.name}. 
-        
-Company Information:
-- Description: ${company.description || "Not specified"}
-- About: ${company.info || "Not specified"}
 
 You received the following email. Please write a professional but friendly response:
+
+IMPORTANT: 
+- Do NOT use placeholders like [Your Name], [Your Company Name], [Your Title], etc.
+- Do NOT include company description or "Company Information" sections in the email
+- If you need to sign the email, use a professional signature like "Best regards" or "Sincerely"
+- Write as if you are an actual employee of ${company.name}
+- The response should be natural and human-like, not formulaic
+- Only write the email body, no subject line needed
 
 EMAIL TO RESPOND TO:
 ${context}
@@ -157,14 +209,17 @@ ${context}
 Please write an appropriate response that reflects the company's professionalism and values.`;
       }
     } else {
-      // Generate initial outreach email
       prompt = `Generate a business outreach email from ${company.name}. 
 
-Company Information:
-- Description: ${company.description || "Not specified"}
-- About: ${company.info || "Not specified"}
-
-The email should be professional but approachable, about 2-3 paragraphs long. It should introduce the company and its services in a way that matches the company description above.`;
+IMPORTANT: 
+- Do NOT use placeholders like [Your Name], [Your Company Name], [Your Title], etc.
+- Do NOT include company description or "Company Information" sections in the email
+- The email should be written as if coming from an actual representative of ${company.name}
+- If you need to include a name, use a realistic name or just use a professional signature without a specific name
+- The email should be professional but approachable, about 2-3 paragraphs long.
+- It should introduce the company and its services naturally in the flow of the email
+- Make it sound like a human wrote it, not an AI.
+- Only write the email body, no subject line needed`;
     }
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -182,7 +237,7 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
           }
         ],
         max_tokens: 500,
-        temperature: 0.7,
+        temperature: 0.8,
       }),
     });
 
@@ -192,57 +247,124 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
     }
 
     const data = await response.json();
-    return data.choices[0].message.content;
+    let emailContent = data.choices[0].message.content;
+    
+    // Clean up any remaining placeholders that might have slipped through
+    emailContent = cleanEmailContent(emailContent, company.name);
+    
+    return emailContent;
   }
 
-  async function startTest() {
-    if (running || !selected) return;
+  // Function to clean up placeholders in email content
+  function cleanEmailContent(content, companyName) {
+    // Remove common placeholders
+    const placeholders = [
+      /\[Your Name\]/gi,
+      /\[Your Company Name\]/gi,
+      /\[Company Name\]/gi,
+      /\[Your Title\]/gi,
+      /\[Your Position\]/gi,
+      /\[Your Role\]/gi,
+      /\[Date\]/gi,
+      /\[Recipient's Name\]/gi,
+      /\[Specific details about the recipient's business\]/gi,
+      /\[Your Contact Information\]/gi,
+      /company information:/gi,
+      /company description:/gi,
+      /about the company:/gi
+    ];
     
-    setRunning(true);
-    setLog("");
+    let cleaned = content;
+    placeholders.forEach(pattern => {
+      cleaned = cleaned.replace(pattern, '');
+    });
+    
+    // Replace [Your Name] with professional signature
+    if (cleaned.includes('[Your Name]')) {
+      cleaned = cleaned.replace(/\[Your Name\]/gi, `Best regards,\nThe ${companyName} Team`);
+    }
+    
+    // Remove any double line breaks caused by placeholder removal
+    cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n');
+    
+    // Trim extra whitespace
+    cleaned = cleaned.trim();
+    
+    return cleaned;
+  }
+
+  // Function to generate appropriate subject
+  function generateEmailSubject() {
+    if (!emailSubject.trim()) {
+      if (selected) {
+        return `Message from ${selected.name}`;
+      }
+      return "Response to your inquiry";
+    }
+    
+    // If subject doesn't start with Re:, add it for replies
+    const cleanSubject = emailSubject.trim();
+    if (!cleanSubject.toLowerCase().startsWith('re:') && 
+        !cleanSubject.toLowerCase().startsWith('fw:')) {
+      return `Re: ${cleanSubject}`;
+    }
+    
+    return cleanSubject;
+  }
+
+  // Function to send actual email via FastAPI backend
+  async function sendGeneratedEmail(emailContent) {
+    if (!recipientEmail) {
+      alert("Please enter a recipient email address first");
+      return { success: false, error: "No recipient email" };
+    }
+
+    if (!selected) {
+      alert("Please select a company first");
+      return { success: false, error: "No company selected" };
+    }
+
+    setSendingEmail(true);
     
     try {
-      addToLog(`Starting test for: ${selected.name}`);
-      addToLog(`Company description: ${selected.description || "Not available"}`);
-      addToLog(`Company info: ${selected.info || "Not available"}`);
-      addToLog(`Emails to generate: ${emailCount}`);
-      addToLog(`Concurrency: ${concurrency}`);
-      addToLog("---");
-      
-      if (!openaiKey) {
-        throw new Error("Please enter your OpenAI API key first");
-      }
+      addToLog(`Sending email to: ${recipientEmail}`);
+      addToLog(`Subject: ${generateEmailSubject()}`);
+      addToLog("Connecting to email server...");
 
-      // Generate emails with OpenAI
-      for (let i = 1; i <= emailCount; i++) {
-        addToLog(`Generating email ${i}/${emailCount}...`);
-        
-        const emailContent = await generateEmailWithOpenAI(selected);
-        addToLog(`Email ${i} generated:`);
-        addToLog(`--- Email ${i} Content ---`);
-        addToLog(emailContent);
-        addToLog(`--- End Email ${i} ---`);
-        
-        // Simulate concurrency delay
-        if (i % concurrency === 0) {
-          addToLog(` Waiting for batch completion...`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+      // Call FastAPI backend to send email
+      const response = await fetch('http://localhost:8000/send-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: recipientEmail,
+          subject: generateEmailSubject(),
+          content: emailContent,
+          company_name: selected.name,
+          company_description: "", // Empty to not include in email
+          company_info: "" // Empty to not include in email
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        addToLog(`✅ Email sent successfully to ${recipientEmail}`);
+        return { success: true, message: result.message };
+      } else {
+        throw new Error(result.error || 'Failed to send email');
       }
-      
-      addToLog("---");
-      addToLog("Test completed successfully!");
-      addToLog(`Generated ${emailCount} emails for ${selected.name}`);
-      
     } catch (error) {
-      addToLog(`Error: ${error.message}`);
-      addToLog("Make sure your OpenAI API key is valid and has credits");
+      console.error("Error sending email:", error);
+      addToLog(`❌ Error sending email: ${error.message}`);
+      return { success: false, error: error.message };
     } finally {
-      setRunning(false);
+      setSendingEmail(false);
     }
   }
 
-  // New function to generate response to mock email
+  // Function to generate email response and optionally send it
   async function generateEmailResponse() {
     if (!selected || !mockEmail.trim()) {
       alert("Please select a company and enter a mock email first");
@@ -254,24 +376,69 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
       return;
     }
 
+    if (autoSend && !recipientEmail) {
+      alert("Auto-send is enabled. Please enter a recipient email address");
+      return;
+    }
+
     setGeneratingResponse(true);
     setEmailResponse("");
 
     try {
+      addToLog(`Generating response for ${selected.name}...`);
+      
       const response = await generateEmailWithOpenAI(selected, mockEmail);
       setEmailResponse(response);
-      addToLog(`Generated response for ${selected.name} to mock email`);
       
-      // Check if it was detected as wrong company
+      addToLog(`✅ Response generated for ${selected.name}`);
+      
       const isForOtherCompany = appearsToBeForOtherCompany(mockEmail, selected.name);
       if (isForOtherCompany) {
         addToLog(`Note: Email appears to be directed at a different company. Response will clarify this.`);
       }
+
+      // If auto-send is enabled, send the email immediately
+      if (autoSend && recipientEmail) {
+        addToLog(`Auto-sending email to ${recipientEmail}...`);
+        const sendResult = await sendGeneratedEmail(response);
+        
+        if (sendResult.success) {
+          addToLog(`✅ Email successfully sent to ${recipientEmail}`);
+        } else {
+          addToLog(`⚠️ Generated response ready, but email sending failed: ${sendResult.error}`);
+        }
+      } else if (!autoSend) {
+        addToLog("✅ Response generated and ready to send.");
+        addToLog("Note: Auto-send is disabled. You can manually send this email using the 'Send Email' button.");
+      }
+      
     } catch (error) {
       console.error("Error generating response:", error);
       setEmailResponse(`Error: ${error.message}`);
+      addToLog(`❌ Error generating response: ${error.message}`);
     } finally {
       setGeneratingResponse(false);
+    }
+  }
+
+  // Manual send function for when auto-send is disabled
+  async function sendEmailManually() {
+    if (!emailResponse) {
+      alert("No email response generated yet");
+      return;
+    }
+
+    if (!recipientEmail) {
+      alert("Please enter a recipient email address");
+      return;
+    }
+
+    const sendResult = await sendGeneratedEmail(emailResponse);
+    
+    if (sendResult.success) {
+      alert(`Email sent successfully to ${recipientEmail}`);
+    } else {
+      alert(`Failed to send email: ${sendResult.error}`);
     }
   }
 
@@ -287,6 +454,7 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
 
   function clearMockEmail() {
     setMockEmail("");
+    setEmailSubject("");
     setEmailResponse("");
   }
 
@@ -316,7 +484,7 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
       </section>
 
       <section className={styles.detailPane}>
-        <h3>Email Testing</h3>
+        <h3>Email Response System</h3>
         
         {/* Selected Company Info */}
         {selected && (
@@ -341,36 +509,88 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
             placeholder="sk-..."
           />
           <small className={styles.helperText}>
-            Your API key is used only for this test and is not stored
+            Your API key is used only for this session and is not stored
           </small>
+        </div>
+
+        {/* Recipient Email and Auto-send Settings */}
+        <div className={styles.section}>
+          <h4>Email Settings</h4>
+          <div className={styles.grid}>
+            <Input 
+              label="Recipient Email" 
+              value={recipientEmail} 
+              onChange={setRecipientEmail} 
+              type="email"
+              placeholder="recipient@gmail.com"
+              required={autoSend}
+            />
+            
+            
+            <label className={styles.checkRow}>
+              <input 
+                type="checkbox" 
+                checked={autoSend} 
+                onChange={(e) => setAutoSend(e.target.checked)} 
+              />
+              <span>Auto-send email when generated</span>
+            </label>
+            
+            <small className={styles.helperText}>
+              {autoSend ? 
+                "Emails will be sent automatically after generation" : 
+                "You'll need to manually send emails after generation"}
+            </small>
+          </div>
         </div>
 
         {/* Email Response Section */}
         <div className={styles.section}>
-          <h4>Email Response Test</h4>
+          <h4>Generate Email Response</h4>
           <div className={styles.mockEmailSection}>
             <label className={styles.textareaWrap}>
               <span>Mock Email to Respond To:</span>
               <textarea
                 value={mockEmail}
                 onChange={(e) => setMockEmail(e.target.value)}
-                placeholder="Paste an email here that you want the AI to respond to..."
-                rows={6}
+                placeholder="Paste or type the email you want to respond to...
+                
+Example:
+Subject: Inquiry about your services
+Dear Team,
+
+I'm interested in learning more about your products..."
+
+                rows={8}
               />
+              <small className={styles.helperText}>
+                Tip: Include "Subject:" on the first line for better results
+              </small>
             </label>
             
             <div className={styles.responseActions}>
               <button
                 className={styles.respondBtn}
                 onClick={generateEmailResponse}
-                disabled={generatingResponse || !selected || !mockEmail.trim() || !openaiKey}
+                disabled={generatingResponse || !selected || !mockEmail.trim() || !openaiKey || (autoSend && !recipientEmail)}
               >
-                {generatingResponse ? "Generating Response..." : "Generate Response"}
+                {generatingResponse ? "Generating Response..." : "Generate & Send Response"}
               </button>
+              
+              {!autoSend && emailResponse && (
+                <button
+                  className={styles.sendBtn}
+                  onClick={sendEmailManually}
+                  disabled={sendingEmail || !recipientEmail}
+                >
+                  {sendingEmail ? "Sending..." : "Send Email"}
+                </button>
+              )}
+              
               <button
                 className={styles.clearBtn}
                 onClick={clearMockEmail}
-                disabled={generatingResponse}
+                disabled={generatingResponse || sendingEmail}
               >
                 Clear
               </button>
@@ -378,68 +598,58 @@ The email should be professional but approachable, about 2-3 paragraphs long. It
 
             {emailResponse && (
               <div className={styles.responseOutput}>
-                <h5>Generated Response:</h5>
+                <div className={styles.responseHeader}>
+                  <h5>Generated Response</h5>
+                  <div className={styles.subjectPreview}>
+                    <strong>Subject:</strong> {generateEmailSubject()}
+                  </div>
+                </div>
                 <div className={styles.responseContent}>
                   {emailResponse}
+                </div>
+                <div className={styles.responseMeta}>
+                  <small>
+                    {autoSend && recipientEmail ? 
+                      `This email was ${sendingEmail ? 'being sent' : 'sent'} to ${recipientEmail}` : 
+                      "Ready to send. Click 'Send Email' above."}
+                  </small>
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Bulk Email Generation Section */}
+        {/* Log Settings and Output */}
         <div className={styles.section}>
-          <h4>Bulk Email Generation</h4>
-          <div className={styles.grid}>
-            <Input 
-              label="Number of emails" 
-              type="number" 
-              value={emailCount} 
-              onChange={(v) => setEmailCount(Number(v))} 
-              min="1"
-              max="20"
-            />
-            <Input 
-              label="Concurrency level" 
-              type="number" 
-              value={concurrency} 
-              onChange={(v) => setConcurrency(Number(v))} 
-              min="1"
-              max="5"
-            />
+          <div className={styles.logHeader}>
+            <h4>Activity Log</h4>
             <label className={styles.checkRow}>
               <input 
                 type="checkbox" 
                 checked={logEnabled} 
                 onChange={(e) => setLogEnabled(e.target.checked)} 
               />
-              <span>Show detailed log</span>
+              <span>Enable Log</span>
             </label>
-            
-            <div className={styles.actions}>
-              <button 
-                className={styles.startBtn} 
-                onClick={startTest} 
-                disabled={running || !selected || !openaiKey}
-              >
-                {running ? "Generating Emails..." : "Generate Test Emails"}
-              </button>
-              <button 
-                className={styles.clearBtn} 
-                onClick={clearLog}
-                disabled={running}
-              >
-                Clear Log
-              </button>
-            </div>
           </div>
-        </div>
-
-        <div className={styles.logSection}>
-          <h4>Test Output Log</h4>
+          
+          <div className={styles.logActions}>
+            <button 
+              className={styles.clearBtn} 
+              onClick={clearLog}
+              disabled={generatingResponse || sendingEmail}
+            >
+              Clear Log
+            </button>
+          </div>
+          
           <div className={styles.logBox}>
-            <pre>{log || "Log will appear here when you run the test..."}</pre>
+            <pre>{log || "Activity log will appear here..."}</pre>
           </div>
+          
+          <small className={styles.helperText}>
+            Log shows email generation and sending activity
+          </small>
         </div>
       </section>
     </div>

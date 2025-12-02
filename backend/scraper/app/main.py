@@ -1,19 +1,27 @@
-from fastapi import FastAPI, Query, Depends, HTTPException
+from fastapi import FastAPI, Query, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from pydantic import BaseModel
-from typing import List
-from app.scraper import scrape_company
-from app.database import SessionLocal  
-from .models import Company
+from pydantic import BaseModel, EmailStr
+from typing import List, Optional
+from datetime import datetime
+import json
 
-app = FastAPI(title="Virkum Company Scraper API")
+from app.scraper import scrape_company
+from app.database import SessionLocal, engine  
+from .models import Company, EmailSent, Base
+from .email_service import get_email_service
+
+# Create tables if they don't exist
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Virkum Company Scraper & Email API")
 
 # --- CORS so React (localhost:3000) can talk to FastAPI ---
 origins = [
     "http://localhost:3000",
-    "http://127.0.0.1:3000", ]
+    "http://127.0.0.1:3000",
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,6 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Pydantic models
 class CompanyOut(BaseModel):
     CompanyName: str
     CompanyDescription: str | None = None
@@ -30,6 +39,22 @@ class CompanyOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+class EmailRequest(BaseModel):
+    to: EmailStr
+    subject: str
+    content: str
+    company_name: Optional[str] = None
+    company_description: Optional[str] = None
+    company_info: Optional[str] = None
+    html_content: Optional[str] = None
+
+class EmailResponse(BaseModel):
+    success: bool
+    message: str
+    recipient: str
+    subject: str
+    error: Optional[str] = None
 
 # DB dependency
 def get_db():
@@ -69,7 +94,6 @@ def list_companies(db: Session = Depends(get_db)):
 @app.get("/")
 def root():
     return {"message": "✅ Scraper service is running."}
-
 
 @app.get("/scrape")
 def scrape(
@@ -163,3 +187,132 @@ def cleanup_duplicates(db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error removing duplicates: {str(e)}")
+
+# NEW: Email sending endpoint
+@app.post("/send-email", response_model=EmailResponse)
+async def send_email(
+    email_request: EmailRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Send an email using the configured email service
+    """
+    # Get email service
+    email_service = get_email_service()
+    
+    # Prepare company info if provided
+    company_info = None
+    if email_request.company_name:
+        company_info = {
+            "name": email_request.company_name,
+            "description": email_request.company_description or "",
+            "info": email_request.company_info or ""
+        }
+    
+    # Send email
+    result = email_service.send_email(
+        to_email=email_request.to,
+        subject=email_request.subject,
+        content=email_request.content,
+        html_content=email_request.html_content,
+        company_info=company_info
+    )
+    
+    # Log the email in database
+    try:
+        # Find company ID if company name is provided
+        company_id = None
+        if email_request.company_name:
+            company = db.execute(
+                text('SELECT id FROM "Companies" WHERE "CompanyName" = :name'),
+                {"name": email_request.company_name}
+            ).fetchone()
+            if company:
+                company_id = company[0]
+        
+        # Insert email record
+        email_record = EmailSent(
+            company_id=company_id,
+            recipient=email_request.to,
+            subject=email_request.subject,
+            content=email_request.content,
+            status="sent" if result["success"] else "failed",
+            error_message=None if result["success"] else result.get("error")
+        )
+        db.add(email_record)
+        db.commit()
+        
+    except Exception as e:
+        # Don't fail the whole request if logging fails
+        print(f"Failed to log email: {e}")
+    
+    # Return result
+    if result["success"]:
+        return EmailResponse(
+            success=True,
+            message=result["message"],
+            recipient=result["recipient"],
+            subject=result["subject"]
+        )
+    else:
+        return EmailResponse(
+            success=False,
+            message="Failed to send email",
+            recipient=result.get("recipient", email_request.to),
+            subject=email_request.subject,
+            error=result.get("error", "Unknown error")
+        )
+
+# NEW: Get email sending history
+@app.get("/email-history")
+def get_email_history(
+    limit: int = Query(50, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """
+    Get history of sent emails
+    """
+    try:
+        emails = db.query(EmailSent).order_by(EmailSent.sent_at.desc()).limit(limit).all()
+        
+        return [
+            {
+                "id": email.id,
+                "recipient": email.recipient,
+                "subject": email.subject,
+                "sent_at": email.sent_at.isoformat() if email.sent_at else None,
+                "status": email.status,
+                "company_id": email.company_id
+            }
+            for email in emails
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching email history: {str(e)}")
+
+# NEW: Check email service status
+@app.get("/email-service/status")
+def check_email_service():
+    """
+    Check if email service is properly configured
+    """
+    email_service = get_email_service()
+    
+    # Simple check based on type
+    if hasattr(email_service, 'api_key') and not email_service.api_key:
+        return {
+            "configured": False,
+            "service": "SendGrid",
+            "message": "SendGrid API key not configured"
+        }
+    elif hasattr(email_service, 'smtp_username') and not email_service.smtp_username:
+        return {
+            "configured": False,
+            "service": "SMTP",
+            "message": "SMTP credentials not configured"
+        }
+    else:
+        return {
+            "configured": True,
+            "service": "SendGrid" if hasattr(email_service, 'api_key') else "SMTP",
+            "message": "Email service is configured and ready"
+        }

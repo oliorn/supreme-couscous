@@ -26,6 +26,10 @@ export default function TestPage() {
   const [recipientEmail, setRecipientEmail] = useState("");
   const [autoSend, setAutoSend] = useState(true);
 
+  const [numRequests, setNumRequests] = useState(10);
+  const [isTesting, setIsTesting] = useState(false);
+  const [useRandomCompany, setUseRandomCompany] = useState(false);
+
   // Helper function to detect if email is for a different company
   function appearsToBeForOtherCompany(emailText, companyName) {
     const emailLower = emailText.toLowerCase();
@@ -442,6 +446,74 @@ IMPORTANT:
     }
   }
 
+  async function runSimulatedTest() {
+    // Ef notandi vill EKKI random company, þá þarf valið company
+    if (!useRandomCompany && !selected) {
+      alert("Please select a company or enable Random company");
+      return;
+    }
+    if (!recipientEmail) {
+      alert("Settu inn móttakanda (recipient email) fyrst");
+      return;
+    }
+    if (numRequests <= 0) {
+      alert("Number of requests must be > 0");
+      return;
+    }
+
+    setIsTesting(true);
+    addToLog(
+      `Starting simulated test for ${
+        useRandomCompany ? "RANDOM companies" : selected.name
+      } (${numRequests} requests)...`
+    );
+
+    try {
+    for (let i = 1; i <= numRequests; i++) {
+      // byggjum body eftir því hvort við erum að nota random company eða ekki
+      const body = useRandomCompany
+        ? {
+            to: recipientEmail,
+          }
+        : {
+            company_name: selected.name,
+            to: recipientEmail,
+          };
+
+      const resp = await fetch("http://localhost:8000/simulate-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const data = await resp.json();
+      const latency = data.latency_ms ?? "n/a";
+      const companyUsed = data.company_used || body.company_name || "unknown";
+
+      addToLog(
+        `Run #${i}: status=${data.status}, company=${companyUsed}, latency=${latency} ms`
+      );
+
+      // smá delay svo þetta sé ekki alveg spam (valfrjálst)
+      // await new Promise(res => setTimeout(res, 200));
+    }
+
+    addToLog("✅ Simulated test finished");
+    } catch (err) {
+      console.error(err);
+      addToLog(`❌ Error during simulated test: ${err.message}`);
+    } finally {
+      setIsTesting(false);
+    }
+  }
+  
+
+  function addToLog(message) {
+    if (logEnabled) {
+      setLog(prev => prev + message + "\n\n");
+    }
+  }
+
   function addToLog(message) {
     if (logEnabled) {
       setLog(prev => prev + message + "\n\n");
@@ -457,6 +529,7 @@ IMPORTANT:
     setEmailSubject("");
     setEmailResponse("");
   }
+
 
   return (
     <div className={styles.wrap}>
@@ -618,6 +691,42 @@ I'm interested in learning more about your products..."
             )}
           </div>
         </div>
+        {/* Simulated Load Test */}
+        <div className={styles.section}>
+          <h4>Simulated Load Test</h4>
+          <div className={styles.grid}>
+            <Input
+              label="Number of requests"
+              type="number"
+              value={numRequests}
+              onChange={(v) => setNumRequests(Number(v) || 0)}
+            />
+
+            <label className={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={useRandomCompany}
+                onChange={(e) => setUseRandomCompany(e.target.checked)}
+              />
+              <span>Use random company for each request</span>
+            </label>
+
+            <button
+              className={styles.respondBtn}
+              onClick={runSimulatedTest}
+              disabled={isTesting || (!useRandomCompany && !selected) || !recipientEmail}
+            >
+              {isTesting ? "Running test..." : "Run simulated test"}
+            </button>
+          </div>
+
+          <small className={styles.helperText}>
+            This will call /simulate-email on the backend and log latency for each
+            request. If "Use random company" is checked, the backend will pick a random
+            company from the database each time.
+          </small>
+        </div>
+
 
         {/* Log Settings and Output */}
         <div className={styles.section}>

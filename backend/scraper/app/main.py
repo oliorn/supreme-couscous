@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, Depends, HTTPException, Body
+from fastapi import FastAPI, Query, Depends, HTTPException, Body, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -6,6 +6,7 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime
 import json
+import random, time, requests
 
 from app.scraper import scrape_company
 from app.database import SessionLocal, engine  
@@ -71,7 +72,10 @@ def list_companies(db: Session = Depends(get_db)):
         text(
             """
             SELECT DISTINCT ON ("CompanyName") 
-                   "CompanyName", "CompanyDescription", "CompanyInfo"
+                   id,
+               "CompanyName",
+               "CompanyDescription",
+               "CompanyInfo"
             FROM "Companies"
             ORDER BY "CompanyName"
             """
@@ -317,6 +321,7 @@ def check_email_service():
             "message": "Email service is configured and ready"
         }
     
+
 @app.get("/tests")
 def list_tests(
     limit: int = Query(50, ge=1, le=1000),
@@ -370,3 +375,121 @@ def list_tests(
         import traceback
         print("[ERROR] /tests handler exception:\n", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+SCENARIOS = [
+    "Inquiry about your products\nDear team, I would like to know more about your skincare line...",
+    "Complaint about delivery\nHello, my recent order arrived damaged...",
+    "Question about ingredients\nHi, can you tell me if your products are suitable for sensitive skin?"
+]
+
+class SimulateRequest(BaseModel):
+    company_name: Optional[str] = None
+    to: EmailStr
+
+@app.post("/simulate-email")
+def simulate_email(
+    body: SimulateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Runs a simulated customer email test:
+    - picks random or provided company
+    - picks random scenario
+    - generates + sends email via /send-email
+    - logs into EmailTestRuns table
+    """
+
+    # -----------------------------
+    # 1) Company selection
+    # -----------------------------
+    if body.company_name:
+        company_name = body.company_name
+    else:
+        result = db.execute(
+            text('SELECT "CompanyName" FROM "Companies" ORDER BY RANDOM() LIMIT 1')
+        )
+        row = result.fetchone()
+        if not row:
+            raise HTTPException(status_code=400, detail="No companies available in database")
+        company_name = row[0]
+
+    # -----------------------------
+    # 2) Pick random scenario
+    # -----------------------------
+    scenario = random.choice(SCENARIOS)
+
+    # scenario entire text is used as email body
+    subject = f"Test scenario for {company_name}"
+    content = scenario
+
+    # -----------------------------
+    # 3) Build payload for /send-email
+    # -----------------------------
+    payload = {
+        "to": body.to,
+        "subject": subject,
+        "content": content,
+        "company_name": company_name,
+        "company_description": None,
+        "company_info": None,
+        "html_content": None,
+    }
+
+    # -----------------------------
+    # 4) Perform request + measure latency
+    # -----------------------------
+    t0 = time.time()
+    resp = requests.post("http://localhost:8000/send-email", json=payload)
+    latency_ms = int((time.time() - t0) * 1000)
+
+    try:
+        data = resp.json()
+    except:
+        data = {"success": False, "error": "Invalid JSON returned from send-email"}
+
+    # -----------------------------
+    # 5) Determine status
+    # -----------------------------
+    sent_ok = data.get("success", False)
+
+    # -----------------------------
+    # 6) Insert into EmailTestRuns
+    # -----------------------------
+    try:
+        db.execute(
+            text("""
+                INSERT INTO "EmailTestRuns"
+                (company_name, scenario, input_email, generated_subject,
+                 generated_body, model_name, latency_ms, sent_ok)
+                VALUES
+                (:company_name, :scenario, :input_email, :generated_subject,
+                 :generated_body, :model_name, :latency_ms, :sent_ok)
+            """),
+            {
+                "company_name": company_name,
+                "scenario": scenario,
+                "input_email": content,
+                "generated_subject": data.get("subject"),
+                "generated_body": data.get("message"),
+                "model_name": "openai/ui",   # or your chosen model
+                "latency_ms": latency_ms,
+                "sent_ok": sent_ok,
+            }
+        )
+        db.commit()
+    except Exception as e:
+        print("Error inserting test run:", e)
+        db.rollback()
+
+    # -----------------------------
+    # 7) Final JSON response
+    # -----------------------------
+    return {
+        "status": "ok" if sent_ok else "error",
+        "company_used": company_name,
+        "scenario": scenario,
+        "latency_ms": latency_ms,
+        "sent_ok": sent_ok,
+        "result": data,
+    }
+

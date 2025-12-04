@@ -4,12 +4,14 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+# Path to this file: backend/scraper/app/database.py
+BASE_DIR = Path(__file__).resolve()
 
-# Get the project root directory (3 levels up from this file)
-BASE_DIR = Path(__file__).resolve().parent
+# Go up: app -> scraper -> backend -> project root
+PROJECT_ROOT = BASE_DIR.parents[3]
 
-# Load .env from project root
-load_dotenv(BASE_DIR / ".env")
+# Load .env from project root (SUPREME-COUSCOUS/.env)
+load_dotenv(PROJECT_ROOT / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 

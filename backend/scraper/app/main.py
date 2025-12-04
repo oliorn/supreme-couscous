@@ -316,3 +316,57 @@ def check_email_service():
             "service": "SendGrid" if hasattr(email_service, 'api_key') else "SMTP",
             "message": "Email service is configured and ready"
         }
+    
+@app.get("/tests")
+def list_tests(
+    limit: int = Query(50, ge=1, le=1000),
+    db: Session = Depends(get_db),
+):
+    try:
+        sql = text("""
+            SELECT
+                test_id,
+                companies,
+                num_emails,
+                concurrency_level,
+                started_at,
+                finished_at,
+                total_requests,
+                avg_reply_grade
+            FROM tests
+            ORDER BY test_id DESC
+            LIMIT :limit
+        """)
+
+        rows = db.execute(sql, {"limit": limit}).mappings().all()
+
+        def parse_companies(val):
+            # Ensure companies is a Python list, regardless of JSONB/text
+            try:
+                if val is None:
+                    return []
+                if isinstance(val, (list, dict)):
+                    return val
+                return json.loads(val)
+            except Exception:
+                # Fallback: return as-is if parsing fails
+                return val
+
+        return [
+            {
+                "test_id": row["test_id"],
+                "companies": parse_companies(row["companies"]),
+                "num_emails": row["num_emails"],
+                "concurrency_level": row["concurrency_level"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "total_requests": row["total_requests"],
+                "avg_reply_grade": row["avg_reply_grade"],
+            }
+            for row in rows
+        ]
+
+    except Exception as e:
+        import traceback
+        print("[ERROR] /tests handler exception:\n", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))

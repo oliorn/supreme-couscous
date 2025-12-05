@@ -2,5 +2,10 @@ fastapi
 uvicorn
 requests
 beautifulsoup4
+sqlalchemy
+dotenv
+psycopg2-binary
+email-validator
+python-multipart
 cloud-sql-python-connector[pg8000]
 pg8000

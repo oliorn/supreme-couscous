@@ -20,6 +20,7 @@ app = FastAPI(title="Virkum Company Scraper & Email API")
 
 # --- CORS so React (localhost:3000) can talk to FastAPI ---
 origins = [
+    "https://virkum-respond-frontend-737530900569.europe-west2.run.app",    
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]

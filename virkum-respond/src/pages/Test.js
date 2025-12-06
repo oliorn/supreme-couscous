@@ -336,7 +336,7 @@ IMPORTANT:
       addToLog("Connecting to email server...");
 
       // Call FastAPI backend to send email
-      const response = await fetch('http://localhost:8000/send-email', {
+      const response = await fetch('https://backend-737530900569.europe-west2.run.app/send-email', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -480,7 +480,7 @@ IMPORTANT:
             to: recipientEmail,
           };
 
-      const resp = await fetch("http://localhost:8000/simulate-email", {
+      const resp = await fetch("https://backend-737530900569.europe-west2.run.app/simulate-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

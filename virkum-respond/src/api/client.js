@@ -1,5 +1,5 @@
 
-const API_BASE = process.env.REACT_APP_API_BASE_URL || "https://backend-737530900569.europe-west2.run.app" || "127.0.0.1:8000";
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "https://backend-737530900569.europe-west2.run.app";
 export async function apiFetch(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
     const res = await fetch(url, {

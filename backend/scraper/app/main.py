@@ -7,6 +7,7 @@ from typing import List, Optional
 from datetime import datetime
 import json
 import random, time, requests
+import os
 
 from app.scraper import scrape_company
 from app.database import SessionLocal, engine  
@@ -439,8 +440,11 @@ def simulate_email(
     # -----------------------------
     # 4) Perform request + measure latency
     # -----------------------------
+
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+
     t0 = time.time()
-    resp = requests.post("http://localhost:8000/send-email", json=payload)
+    resp = requests.post(f"{backend_url}/send-email", json=payload)
     latency_ms = int((time.time() - t0) * 1000)
 
     try:

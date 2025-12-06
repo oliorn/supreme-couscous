@@ -7,6 +7,7 @@ COPY scraper/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY scraper/app ./app
+COPY testResult ./testResult
 
 ENV PYTHONPATH="/app"
 

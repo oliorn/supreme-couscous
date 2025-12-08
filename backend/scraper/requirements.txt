@@ -10,3 +10,4 @@ python-multipart
 cloud-sql-python-connector[pg8000]
 pg8000
 resend
+openai

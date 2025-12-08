@@ -3,9 +3,11 @@ from datetime import datetime, timezone
 import sys
 import os
 import json
-
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from scraper.app.database import SessionLocal
+from app.database import SessionLocal
+
+#sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 
 
 def INSERT_TEST_DATA(settings: dict, results: dict) -> int:

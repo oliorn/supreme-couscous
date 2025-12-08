@@ -659,54 +659,6 @@ def simulate_email(
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def evaluate_with_openai(expected_body: str, generated_body: str):
-    """
-    Skilar (grade_float, latency_ms) þar sem grade er 1–10.
-    """
-    start = time.time()
-
-    prompt = f"""
-You are a strict reviewer grading an email reply.
-
-EXPECTED IDEAL ANSWER:
------------------------
-{expected_body}
-
-MODEL-GENERATED ANSWER:
-------------------------
-{generated_body}
-
-TASK:
-Give a single numeric score from 1 to 10 indicating how well
-the model-generated answer matches the expected answer in terms of:
-- correctness
-- helpfulness
-- tone and professionalism
-- coverage of key points
-
-Respond ONLY with the number, for example: 7.5
-"""
-
-    resp = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=10,
-        temperature=0.0,
-    )
-
-    latency_ms = int((time.time() - start) * 1000)
-    text = resp.choices[0].message.content.strip()
-
-    # Náum fyrstu tölu í svarinu
-    m = re.search(r"(\d+(\.\d+)?)", text)
-    if not m:
-        raise ValueError(f"Could not parse grade from: {text!r}")
-
-    grade = float(m.group(1))
-    # clamp 1–10 bara til öryggis
-    grade = max(1.0, min(10.0, grade))
-
-    return grade, latency_ms
 
 class EvaluateRequest(BaseModel):
     test_run_id: int
@@ -755,18 +707,97 @@ def evaluate_test_run(
     }
 
 
-def compute_similarity(expected: str, generated: str) -> float:
+
+from typing import List
+
+class CreateTestFromRunsRequest(BaseModel):
+    run_ids: List[int]
+    concurrency_level: int = 1
+
+
+@app.post("/tests/from-runs")
+def create_test_from_runs(
+    body: CreateTestFromRunsRequest,
+    db: Session = Depends(get_db),
+):
     """
-    Simple similarity score: percent of overlapping words.
+    Take a list of EmailTestRun IDs, compute summary and insert one row into tests.
+    Used by the 'Run simulated test' button.
     """
-    if not expected or not generated:
-        return 0.0
+    if not body.run_ids:
+        raise HTTPException(status_code=400, detail="run_ids cannot be empty")
 
-    exp_words = set(expected.lower().split())
-    gen_words = set(generated.lower().split())
+    # 1) Fetch all runs in this batch
+    runs = (
+        db.query(EmailTestRun)
+        .filter(EmailTestRun.id.in_(body.run_ids))
+        .all()
+    )
+    if not runs:
+        raise HTTPException(status_code=404, detail="No EmailTestRuns found for given IDs")
 
-    overlap = exp_words.intersection(gen_words)
-    score = len(overlap) / max(len(exp_words), 1)
+    # 2) Compute stats
+    companies = sorted({r.company_name for r in runs if r.company_name})
+    num_emails = len(runs)
+    total_requests = num_emails  # or adjust if you ever do retries
 
-    # Return as 0–10 scale
-    return round(score * 10, 2)
+    grades = [float(r.reply_grade) for r in runs if r.reply_grade is not None]
+    avg_reply_grade = sum(grades) / len(grades) if grades else None
+
+    # 3) Started/finished timestamps (you might have created_at/sent_at)
+    started_at = min(r.created_at for r in runs) if hasattr(runs[0], "created_at") else datetime.utcnow()
+    finished_at = max(r.created_at for r in runs) if hasattr(runs[0], "created_at") else datetime.utcnow()
+
+    # If your tests.companies column is JSON/JSONB:
+    companies_json = json.dumps(companies)
+
+    # 4) Insert into tests table and return test_id
+    insert_sql = text("""
+        INSERT INTO tests (
+            companies,
+            num_emails,
+            concurrency_level,
+            started_at,
+            finished_at,
+            total_requests,
+            avg_reply_grade
+        )
+        VALUES (
+            :companies,
+            :num_emails,
+            :concurrency_level,
+            :started_at,
+            :finished_at,
+            :total_requests,
+            :avg_reply_grade
+        )
+        RETURNING test_id
+    """)
+
+    result = db.execute(
+        insert_sql,
+        {
+            "companies": companies_json,
+            "num_emails": num_emails,
+            "concurrency_level": body.concurrency_level,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "total_requests": total_requests,
+            "avg_reply_grade": avg_reply_grade,
+        },
+    )
+    db.commit()
+
+    new_test_id = result.fetchone()[0]
+
+    return {
+        "status": "ok",
+        "test_id": new_test_id,
+        "companies": companies,
+        "num_emails": num_emails,
+        "concurrency_level": body.concurrency_level,
+        "total_requests": total_requests,
+        "avg_reply_grade": avg_reply_grade,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+    }

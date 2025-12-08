@@ -447,38 +447,33 @@ IMPORTANT:
   }
 
   async function runSimulatedTest() {
-    // Ef notandi vill EKKI random company, þá þarf valið company
-    if (!useRandomCompany && !selected) {
-      alert("Please select a company or enable Random company");
-      return;
-    }
-    if (!recipientEmail) {
-      alert("Settu inn móttakanda (recipient email) fyrst");
-      return;
-    }
-    if (numRequests <= 0) {
-      alert("Number of requests must be > 0");
-      return;
-    }
+  if (!useRandomCompany && !selected) {
+    alert("Please select a company or enable Random company");
+    return;
+  }
+  if (!recipientEmail) {
+    alert("Settu inn móttakanda (recipient email) fyrst");
+    return;
+  }
+  if (numRequests <= 0) {
+    alert("Number of requests must be > 0");
+    return;
+  }
 
-    setIsTesting(true);
-    addToLog(
-      `Starting simulated test for ${
-        useRandomCompany ? "RANDOM companies" : selected.name
-      } (${numRequests} requests)...`
-    );
+  setIsTesting(true);
+  addToLog(
+    `Starting simulated test for ${
+      useRandomCompany ? "RANDOM companies" : selected.name
+    } (${numRequests} requests)...`
+  );
 
-    try {
+  const runIds = [];
+
+  try {
     for (let i = 1; i <= numRequests; i++) {
-      // byggjum body eftir því hvort við erum að nota random company eða ekki
       const body = useRandomCompany
-        ? {
-            to: recipientEmail,
-          }
-        : {
-            company_name: selected.name,
-            to: recipientEmail,
-          };
+        ? { to: recipientEmail }
+        : { company_name: selected.name, to: recipientEmail };
 
       const resp = await fetch("http://localhost:8000/simulate-email", {
         method: "POST",
@@ -486,26 +481,75 @@ IMPORTANT:
         body: JSON.stringify(body),
       });
 
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`HTTP ${resp.status}: ${text}`);
+      }
+
       const data = await resp.json();
+
+      // safna test_run_id fyrir þennan run
+      if (data.test_run_id) {
+        runIds.push(data.test_run_id);
+      }
+
       const latency = data.latency_ms ?? "n/a";
-      const companyUsed = data.company_used || body.company_name || "unknown";
+      const companyUsed =
+        data.company_used || body.company_name || "unknown";
 
       addToLog(
         `Run #${i}: status=${data.status}, company=${companyUsed}, latency=${latency} ms`
       );
-
-      // smá delay svo þetta sé ekki alveg spam (valfrjálst)
-      // await new Promise(res => setTimeout(res, 200));
     }
 
-    addToLog("✅ Simulated test finished");
-    } catch (err) {
-      console.error(err);
-      addToLog(`❌ Error during simulated test: ${err.message}`);
-    } finally {
-      setIsTesting(false);
+    addToLog("Finished individual simulated runs, creating batch summary...");
+
+    // 🔥 nýtt: búa til eitt 'test' í tests-töflunni
+    if (runIds.length > 0) {
+      const summaryResp = await fetch(
+        "http://localhost:8000/tests/from-runs",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            run_ids: runIds,
+            concurrency_level: 1, // eða hvað sem UI er með
+          }),
+        }
+      );
+
+      if (!summaryResp.ok) {
+        const text = await summaryResp.text();
+        throw new Error(
+          `Failed to create test summary: HTTP ${summaryResp.status}: ${text}`
+        );
+      }
+
+      const summary = await summaryResp.json();
+
+      const companies = Array.isArray(summary.companies)
+        ? summary.companies.join(", ")
+        : "N/A";
+
+      const avgGrade =
+        summary.avg_reply_grade != null
+          ? (summary.avg_reply_grade*10).toFixed(1) + " %"
+          : "N/A";
+
+      addToLog(
+        `✅ Batch Test #${summary.test_id} created – companies: ${companies}, total_requests: ${summary.total_requests}, avg grade: ${avgGrade}`
+      );
+    } else {
+      addToLog("No runs had IDs, skipping batch summary.");
     }
+  } catch (err) {
+    console.error(err);
+    addToLog(`❌ Error during simulated test: ${err.message}`);
+  } finally {
+    setIsTesting(false);
   }
+}
+
   
 
   function addToLog(message) {

@@ -47,6 +47,7 @@ Write a polite, professional reply to the following email:
     generated_body = completion.choices[0].message.content
 
     # Einföld subject-regla
+    model_name = "gpt-4.1-mini"
     first_line = input_email.split("\n", 1)[0]
     if first_line.lower().startswith("subject:"):
         base_subject = first_line[len("Subject:"):].strip()
@@ -160,6 +161,12 @@ class EmailResponse(BaseModel):
     recipient: str
     subject: str
     error: Optional[str] = None
+
+class RunTestRequest(BaseModel):
+    num_emails: int
+    concurrency_level: int = 1
+    to: EmailStr
+    company_name: Optional[str] = None  # if None → random
 
 # DB dependency
 def get_db():
@@ -491,6 +498,101 @@ class SimulateRequest(BaseModel):
     company_name: Optional[str] = None
     to: EmailStr
 
+from typing import Tuple
+
+def run_single_simulation(
+    to_email: str,
+    company_name: Optional[str] = None,
+) -> Tuple[EmailTestRun, int, int]:
+    """
+    Run ONE simulated email:
+    - choose company (given or random)
+    - choose scenario
+    - call OpenAI to generate reply
+    - grade it with LLM
+    - store EmailTestRun in DB
+    Returns: (EmailTestRun, total_latency_ms, llm_latency_ms)
+    """
+    db = SessionLocal()
+    try:
+        # 1) Choose company_name
+        if company_name:
+            chosen_company = company_name
+        else:
+            result = db.execute(
+                text('SELECT "CompanyName" FROM "Companies" ORDER BY RANDOM() LIMIT 1')
+            )
+            row = result.fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No companies available in database")
+            chosen_company = row[0]
+
+        # 2) Choose random scenario
+        input_email = random.choice(SCENARIOS)
+        scenario = input_email.split("\n", 1)[0].strip()
+
+        # 3) Call OpenAI
+        try:
+            generated_subject, generated_body, model_name, llm_latency_ms = generate_reply_with_openai(
+                company_name=chosen_company,
+                input_email=input_email,
+            )
+        except HTTPException:
+            # log failed run
+            test_run = EmailTestRun(
+                company_name=chosen_company,
+                scenario=scenario,
+                input_email=input_email,
+                generated_subject=None,
+                generated_body=None,
+                model_name="gpt-4.1-mini",
+                latency_ms=None,
+                sent_ok=False,
+            )
+            db.add(test_run)
+            db.commit()
+            db.refresh(test_run)
+            # re-raise for caller if needed
+            raise
+
+        sent_ok = False
+        send_latency_ms = 0
+        total_latency_ms = llm_latency_ms + send_latency_ms
+
+        # 4) Build EmailTestRun
+        test_run = EmailTestRun(
+            company_name=chosen_company,
+            scenario=scenario,
+            input_email=input_email,
+            generated_subject=generated_subject,
+            generated_body=generated_body,
+            model_name="gpt-4.1-mini",
+            latency_ms=total_latency_ms,
+            sent_ok=sent_ok,
+        )
+
+        # 5) Grade with LLM
+        try:
+            grade, eval_latency_ms = evaluate_with_openai_rubric(
+                company_name=chosen_company,
+                scenario=scenario,
+                input_email=input_email,
+                generated_body=generated_body,
+            )
+            test_run.reply_grade = grade
+        except Exception as e:
+            print(f"LLM grading failed: {e}")
+
+        # 6) Save
+        db.add(test_run)
+        db.commit()
+        db.refresh(test_run)
+
+        return test_run, total_latency_ms, llm_latency_ms
+
+    finally:
+        db.close()
+
 
 def generate_reply_with_openai(company_name: str, input_email: str):
     """
@@ -552,106 +654,30 @@ Return your result in JSON with the fields:
 @app.post("/simulate-email")
 def simulate_email(
     body: SimulateRequest,
-    db: Session = Depends(get_db)
 ):
     """
-    Býr til mock email, kallar á OpenAI til að búa til svar,
-    sendir email og vistar allt í EmailTestRuns (með reply_grade ef til er ExpectedAnswer).
+    Wrapper around run_single_simulation for the UI.
     """
-
-    # 1) Velja company_name (beint eða random úr DB)
-    if body.company_name:
-        company_name = body.company_name
-    else:
-        result = db.execute(
-            text('SELECT "CompanyName" FROM "Companies" ORDER BY RANDOM() LIMIT 1')
-        )
-        row = result.fetchone()
-        if not row:
-            raise HTTPException(status_code=400, detail="No companies available in database")
-        company_name = row[0]
-
-    # 2) Velja random scenario sem input_email
-    input_email = random.choice(SCENARIOS)
-    # Scenario = fyrsti línan (t.d. "Subject: Complaint about delivery")
-    scenario = input_email.split("\n", 1)[0].strip()
-
-    # 3) Kalla á OpenAI til að fá svarið
-    try:
-        generated_subject, generated_body, model_name, llm_latency_ms = generate_reply_with_openai(
-            company_name=company_name,
-            input_email=input_email,
-        )
-    except HTTPException as e:
-        # Vista failed run (ef þú vilt) og kasta svo áfram
-        test_run = EmailTestRun(
-            company_name=company_name,
-            scenario=scenario,
-            input_email=input_email,
-            generated_body=None,
-            generated_subject=None,
-            model_name="gpt-4.1-mini",
-            latency_ms=None,
-            sent_ok=False,
-        )
-        db.add(test_run)
-        db.commit()
-        db.refresh(test_run)
-        raise
-
-    # 4) EKKI lengur senda email í gegnum /send-email – bara simulate
-    sent_ok = False
-    send_message = "Simulation only – email was NOT actually sent."
-    send_latency_ms = 0
-
-    total_latency_ms = llm_latency_ms + send_latency_ms
-
-
-    # --- 5) Vista í EmailTestRuns (núna með RÉTTUM dálkum) ---
-    test_run = EmailTestRun(
-        company_name=company_name,
-        scenario=scenario,
-        input_email=input_email,
-        generated_subject=generated_subject,
-        generated_body=generated_body,
-        model_name="gpt-4.1-mini",
-        latency_ms=total_latency_ms,
-        sent_ok=sent_ok,
+    # call the helper (sync)
+    test_run, total_latency_ms, llm_latency_ms = run_single_simulation(
+        to_email=body.to,
+        company_name=body.company_name,
     )
 
-    # 5.5)  AUTO-GRADING: LLM-dómari, engin ExpectedAnswer lengur
-    try:
-        grade, eval_latency_ms = evaluate_with_openai_rubric(
-            company_name=company_name,
-            scenario=scenario,
-            input_email=input_email,
-            generated_body=generated_body,
-        )
-        test_run.reply_grade = grade
-    except Exception as e:
-        # ef dómari bregst, viljum ekki drepa allt endpointið
-        print(f"LLM grading failed: {e}")
-        # test_run.reply_grade verður þá bara None
+    send_message = "Simulation only – email was NOT actually sent."
 
-
-    # 6) Vista test_run
-    db.add(test_run)
-    db.commit()
-    db.refresh(test_run)
-
-    # 7) Skila niðurstöðu til UI
     return {
         "status": "ok",
-        "company_used": company_name,
+        "company_used": test_run.company_name,
         "latency_ms": total_latency_ms,
         "llm_latency_ms": llm_latency_ms,
-        "sent_ok": sent_ok,
+        "sent_ok": test_run.sent_ok,
         "test_run_id": test_run.id,
         "preview": {
-            "scenario": scenario,
-            "input_email": input_email,
-            "generated_subject": generated_subject,
-            "generated_body": generated_body,
+            "scenario": test_run.scenario,
+            "input_email": test_run.input_email,
+            "generated_subject": test_run.generated_subject,
+            "generated_body": test_run.generated_body,
             "send_message": send_message,
             "reply_grade": float(test_run.reply_grade) if test_run.reply_grade is not None else None,
         },
@@ -714,44 +740,34 @@ class CreateTestFromRunsRequest(BaseModel):
     run_ids: List[int]
     concurrency_level: int = 1
 
-
-@app.post("/tests/from-runs")
-def create_test_from_runs(
-    body: CreateTestFromRunsRequest,
-    db: Session = Depends(get_db),
+def create_test_summary_from_run_ids(
+    db: Session,
+    run_ids: List[int],
+    concurrency_level: int,
 ):
-    """
-    Take a list of EmailTestRun IDs, compute summary and insert one row into tests.
-    Used by the 'Run simulated test' button.
-    """
-    if not body.run_ids:
+    if not run_ids:
         raise HTTPException(status_code=400, detail="run_ids cannot be empty")
 
-    # 1) Fetch all runs in this batch
     runs = (
         db.query(EmailTestRun)
-        .filter(EmailTestRun.id.in_(body.run_ids))
+        .filter(EmailTestRun.id.in_(run_ids))
         .all()
     )
     if not runs:
         raise HTTPException(status_code=404, detail="No EmailTestRuns found for given IDs")
 
-    # 2) Compute stats
     companies = sorted({r.company_name for r in runs if r.company_name})
     num_emails = len(runs)
-    total_requests = num_emails  # or adjust if you ever do retries
+    total_requests = num_emails
 
     grades = [float(r.reply_grade) for r in runs if r.reply_grade is not None]
     avg_reply_grade = sum(grades) / len(grades) if grades else None
 
-    # 3) Started/finished timestamps (you might have created_at/sent_at)
-    started_at = min(r.created_at for r in runs) if hasattr(runs[0], "created_at") else datetime.utcnow()
-    finished_at = max(r.created_at for r in runs) if hasattr(runs[0], "created_at") else datetime.utcnow()
+    started_at = min(getattr(r, "created_at", datetime.utcnow()) for r in runs)
+    finished_at = max(getattr(r, "created_at", datetime.utcnow()) for r in runs)
 
-    # If your tests.companies column is JSON/JSONB:
     companies_json = json.dumps(companies)
 
-    # 4) Insert into tests table and return test_id
     insert_sql = text("""
         INSERT INTO tests (
             companies,
@@ -779,7 +795,7 @@ def create_test_from_runs(
         {
             "companies": companies_json,
             "num_emails": num_emails,
-            "concurrency_level": body.concurrency_level,
+            "concurrency_level": concurrency_level,
             "started_at": started_at,
             "finished_at": finished_at,
             "total_requests": total_requests,
@@ -787,7 +803,6 @@ def create_test_from_runs(
         },
     )
     db.commit()
-
     new_test_id = result.fetchone()[0]
 
     return {
@@ -795,9 +810,64 @@ def create_test_from_runs(
         "test_id": new_test_id,
         "companies": companies,
         "num_emails": num_emails,
-        "concurrency_level": body.concurrency_level,
+        "concurrency_level": concurrency_level,
         "total_requests": total_requests,
         "avg_reply_grade": avg_reply_grade,
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
     }
+
+import asyncio
+
+@app.post("/run-simulated-test")
+async def run_simulated_test(
+    body: RunTestRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Run num_emails simulations with given concurrency_level.
+    Uses run_single_simulation() in parallel and then creates
+    one summary row in tests.
+    """
+    if body.num_emails <= 0:
+        raise HTTPException(status_code=400, detail="num_emails must be > 0")
+    if body.concurrency_level <= 0:
+        raise HTTPException(status_code=400, detail="concurrency_level must be > 0")
+
+    semaphore = asyncio.Semaphore(body.concurrency_level)
+
+    async def run_one():
+        # bound concurrency with semaphore, then run sync code in thread
+        async with semaphore:
+            test_run, _, _ = await asyncio.to_thread(
+                run_single_simulation,
+                body.to,
+                body.company_name,
+            )
+            return test_run.id
+
+    # create tasks
+    tasks = [run_one() for _ in range(body.num_emails)]
+    run_ids = await asyncio.gather(*tasks)
+
+    # create summary in tests table using the helper
+    summary = create_test_summary_from_run_ids(
+        db=db,
+        run_ids=list(run_ids),
+        concurrency_level=body.concurrency_level,
+    )
+
+    # include run_ids in the response for debugging if you like
+    summary["run_ids"] = list(run_ids)
+    return summary
+
+@app.post("/tests/from-runs")
+def create_test_from_runs(
+    body: CreateTestFromRunsRequest,
+    db: Session = Depends(get_db),
+):
+    return create_test_summary_from_run_ids(
+        db=db,
+        run_ids=body.run_ids,
+        concurrency_level=body.concurrency_level,
+    )

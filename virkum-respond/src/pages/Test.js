@@ -3,6 +3,8 @@ import styles from "./Test.module.css";
 import Input from "../components/Input.js";
 import { fetchCompanies } from "../api/scraper";
 
+
+
 export default function TestPage() {
   const [companies, setCompanies] = useState([]);
   const [selectedId, setSelectedId] = useState("");
@@ -29,6 +31,7 @@ export default function TestPage() {
   const [numRequests, setNumRequests] = useState(10);
   const [isTesting, setIsTesting] = useState(false);
   const [useRandomCompany, setUseRandomCompany] = useState(false);
+  const [selectedConcurrency, setSelectedConcurrency] = useState(1);
 
   // Helper function to detect if email is for a different company
   function appearsToBeForOtherCompany(emailText, companyName) {
@@ -464,84 +467,57 @@ IMPORTANT:
   addToLog(
     `Starting simulated test for ${
       useRandomCompany ? "RANDOM companies" : selected.name
-    } (${numRequests} requests)...`
+    } (${numRequests} requests, concurrency ${selectedConcurrency})...`
   );
 
-  const runIds = [];
-
   try {
-    for (let i = 1; i <= numRequests; i++) {
-      const body = useRandomCompany
-        ? { to: recipientEmail }
-        : { company_name: selected.name, to: recipientEmail };
+    // Build payload for /run-simulated-test
+    const payload = {
+      num_emails: numRequests,
+      concurrency_level: selectedConcurrency,       // e.g. 1, 5, 10…
+      to: recipientEmail,
+    };
 
-      const resp = await fetch("http://localhost:8000/simulate-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`HTTP ${resp.status}: ${text}`);
-      }
-
-      const data = await resp.json();
-
-      // safna test_run_id fyrir þennan run
-      if (data.test_run_id) {
-        runIds.push(data.test_run_id);
-      }
-
-      const latency = data.latency_ms ?? "n/a";
-      const companyUsed =
-        data.company_used || body.company_name || "unknown";
-
-      addToLog(
-        `Run #${i}: status=${data.status}, company=${companyUsed}, latency=${latency} ms`
-      );
+    // Only send company_name if *not* random
+    if (!useRandomCompany && selected?.name) {
+      payload.company_name = selected.name;
     }
 
-    addToLog("Finished individual simulated runs, creating batch summary...");
+    const resp = await fetch("http://localhost:8000/run-simulated-test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-    // 🔥 nýtt: búa til eitt 'test' í tests-töflunni
-    if (runIds.length > 0) {
-      const summaryResp = await fetch(
-        "http://localhost:8000/tests/from-runs",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            run_ids: runIds,
-            concurrency_level: 1, // eða hvað sem UI er með
-          }),
-        }
-      );
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
 
-      if (!summaryResp.ok) {
-        const text = await summaryResp.text();
-        throw new Error(
-          `Failed to create test summary: HTTP ${summaryResp.status}: ${text}`
-        );
-      }
+    const summary = await resp.json();
 
-      const summary = await summaryResp.json();
+    const companies = Array.isArray(summary.companies)
+      ? summary.companies.join(", ")
+      : "N/A";
 
-      const companies = Array.isArray(summary.companies)
-        ? summary.companies.join(", ")
+    // avg_reply_grade is 0–10 in your backend; *10 → percent
+    const avgGrade =
+      summary.avg_reply_grade != null
+        ? (summary.avg_reply_grade * 10).toFixed(1) + " %"
         : "N/A";
 
-      const avgGrade =
-        summary.avg_reply_grade != null
-          ? (summary.avg_reply_grade*10).toFixed(1) + " %"
-          : "N/A";
+    addToLog(
+      `✅ Batch Test #${summary.test_id} created – companies: ${companies}, ` +
+        `total_requests: ${summary.total_requests}, ` +
+        `concurrency: ${summary.concurrency_level}, avg grade: ${avgGrade}`
+    );
 
-      addToLog(
-        `✅ Batch Test #${summary.test_id} created – companies: ${companies}, total_requests: ${summary.total_requests}, avg grade: ${avgGrade}`
-      );
-    } else {
-      addToLog("No runs had IDs, skipping batch summary.");
-    }
+    // If you want, you can also log run_ids if you return them from backend:
+    // addToLog(`Run IDs: ${summary.run_ids.join(", ")}`);
+
+    // Optionally refresh your History view here if this page owns that:
+    // await loadHistory();
+
   } catch (err) {
     console.error(err);
     addToLog(`❌ Error during simulated test: ${err.message}`);
@@ -549,6 +525,7 @@ IMPORTANT:
     setIsTesting(false);
   }
 }
+
 
   
 
@@ -745,6 +722,14 @@ I'm interested in learning more about your products..."
               value={numRequests}
               onChange={(v) => setNumRequests(Number(v) || 0)}
             />
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={selectedConcurrency}
+              onChange={(e) => setSelectedConcurrency(Number(e.target.value))}
+              className={styles.input}
+            />
 
             <label className={styles.checkRow}>
               <input
@@ -770,6 +755,9 @@ I'm interested in learning more about your products..."
             company from the database each time.
           </small>
         </div>
+        <label>Concurrency level</label>
+        
+
 
 
         {/* Log Settings and Output */}

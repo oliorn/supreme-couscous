@@ -27,6 +27,10 @@ export default function TestPage() {
   const [sendingEmail, setSendingEmail] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [autoSend, setAutoSend] = useState(true);
+  const [generatedSubject, setGeneratedSubject] = useState("");
+  const [generatedBody, setGeneratedBody] = useState("");
+  const [generatedGrade, setGeneratedGrade] = useState(null);
+
 
   const [numRequests, setNumRequests] = useState(10);
   const [isTesting, setIsTesting] = useState(false);
@@ -378,11 +382,7 @@ IMPORTANT:
       return;
     }
 
-    if (!openaiKey) {
-      alert("Please enter your OpenAI API key first");
-      return;
-    }
-
+    // openaiKey er ekki lengur notað á frontend
     if (autoSend && !recipientEmail) {
       alert("Auto-send is enabled. Please enter a recipient email address");
       return;
@@ -393,32 +393,91 @@ IMPORTANT:
 
     try {
       addToLog(`Generating response for ${selected.name}...`);
-      
-      const response = await generateEmailWithOpenAI(selected, mockEmail);
-      setEmailResponse(response);
-      
-      addToLog(`✅ Response generated for ${selected.name}`);
-      
-      const isForOtherCompany = appearsToBeForOtherCompany(mockEmail, selected.name);
-      if (isForOtherCompany) {
-        addToLog(`Note: Email appears to be directed at a different company. Response will clarify this.`);
+
+      // 1) Kalla á backend: /manual-generate
+      const resp = await fetch("http://localhost:8000/manual-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_name: selected.name,
+          to: recipientEmail || "test@example.com", // notað bara sem metadata
+          input_email: mockEmail,
+        }),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`HTTP ${resp.status}: ${text}`);
       }
 
-      // If auto-send is enabled, send the email immediately
-      if (autoSend && recipientEmail) {
+      const data = await resp.json();
+      const body = data.generated_body || "";
+      const subject = data.generated_subject || "";
+      const grade = data.grade;
+
+      // birtum svarið í UI
+      setEmailResponse(body);
+
+      // logg um gæði + test
+      const gradeText =
+        grade != null ? (grade * 10).toFixed(1) + " %" : "N/A";
+      addToLog(
+        `✅ Response generated for ${selected.name} (grade: ${gradeText})`
+      );
+
+      if (data.test_summary?.test_id) {
+        addToLog(
+          `Stored as Test #${data.test_summary.test_id} in history (1 email, concurrency 1).`
+        );
+      }
+
+      const isForOtherCompany = appearsToBeForOtherCompany(
+        mockEmail,
+        selected.name
+      );
+      if (isForOtherCompany) {
+        addToLog(
+          `Note: Email appears to be directed at a different company. Response will clarify this.`
+        );
+      }
+
+      // 2) Ef auto-send er virkt → kalla á /send-email
+      if (autoSend && recipientEmail && body) {
         addToLog(`Auto-sending email to ${recipientEmail}...`);
-        const sendResult = await sendGeneratedEmail(response);
-        
-        if (sendResult.success) {
-          addToLog(`✅ Email successfully sent to ${recipientEmail}`);
+
+        const sendResp = await fetch("http://localhost:8000/send-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: recipientEmail,
+            subject: subject || "Response",
+            content: body,
+            company_name: selected.name,
+          }),
+        });
+
+        if (!sendResp.ok) {
+          const text = await sendResp.text();
+          addToLog(
+            `⚠️ Generated response ready, but email sending failed: HTTP ${sendResp.status}: ${text}`
+          );
         } else {
-          addToLog(`⚠️ Generated response ready, but email sending failed: ${sendResult.error}`);
+          const sendData = await sendResp.json();
+          if (sendData.success) {
+            addToLog(`✅ Email successfully sent to ${recipientEmail}`);
+          } else {
+            addToLog(
+              `⚠️ Generated response ready, but email sending failed: ${
+                sendData.error || "Unknown error"
+              }`
+            );
+          }
         }
       } else if (!autoSend) {
-        addToLog("✅ Response generated and ready to send.");
-        addToLog("Note: Auto-send is disabled. You can manually send this email using the 'Send Email' button.");
+        addToLog(
+          "✅ Response generated and stored (EmailTestRuns/tests). Auto-send is disabled."
+        );
       }
-      
     } catch (error) {
       console.error("Error generating response:", error);
       setEmailResponse(`Error: ${error.message}`);
@@ -427,6 +486,7 @@ IMPORTANT:
       setGeneratingResponse(false);
     }
   }
+
 
   // Manual send function for when auto-send is disabled
   async function sendEmailManually() {
@@ -649,11 +709,11 @@ IMPORTANT:
                 onChange={(e) => setMockEmail(e.target.value)}
                 placeholder="Paste or type the email you want to respond to...
                 
-Example:
-Subject: Inquiry about your services
-Dear Team,
+                          Example:
+                          Subject: Inquiry about your services
+                          Dear Team,
 
-I'm interested in learning more about your products..."
+                          I'm interested in learning more about your products..."
 
                 rows={8}
               />
@@ -666,7 +726,7 @@ I'm interested in learning more about your products..."
               <button
                 className={styles.respondBtn}
                 onClick={generateEmailResponse}
-                disabled={generatingResponse || !selected || !mockEmail.trim() || !openaiKey || (autoSend && !recipientEmail)}
+                disabled={generatingResponse || !selected || !mockEmail.trim() || (autoSend && !recipientEmail)}
               >
                 {generatingResponse ? "Generating Response..." : "Generate & Send Response"}
               </button>
@@ -722,13 +782,13 @@ I'm interested in learning more about your products..."
               value={numRequests}
               onChange={(v) => setNumRequests(Number(v) || 0)}
             />
-            <input
+            <Input
+              label="Concurrency level"
               type="number"
-              min="1"
-              max="50"
+              min={1}
+              max={50}
               value={selectedConcurrency}
-              onChange={(e) => setSelectedConcurrency(Number(e.target.value))}
-              className={styles.input}
+              onChange={(v) => setSelectedConcurrency(Number(v) || 1)}
             />
 
             <label className={styles.checkRow}>

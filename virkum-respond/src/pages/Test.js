@@ -722,13 +722,13 @@ I'm interested in learning more about your products..."
               value={numRequests}
               onChange={(v) => setNumRequests(Number(v) || 0)}
             />
-            <input
+            <Input
+              label="Concurrency level"
               type="number"
-              min="1"
-              max="50"
+              min={1}
+              max={50}
               value={selectedConcurrency}
-              onChange={(e) => setSelectedConcurrency(Number(e.target.value))}
-              className={styles.input}
+              onChange={(v) => setSelectedConcurrency(Number(v) || 1)}
             />
 
             <label className={styles.checkRow}>

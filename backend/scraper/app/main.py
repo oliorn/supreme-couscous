@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, Depends, HTTPException, Body, APIRouter
+from fastapi import FastAPI, Query, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -6,117 +6,18 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime
 import json
-import random, time, requests
+import random  # ef þú notar það annars staðar
 import os
-import re
-from openai import OpenAI
+
 from app.scraper import scrape_company
-from app.database import SessionLocal, engine  
-from .models import Company, EmailSent, Base, EmailTestRun, ExpectedAnswer
+from app.database import SessionLocal, engine
+from .models import Company, EmailSent, Base, EmailTestRun
 from .email_service import get_email_service
+from .llm_service import evaluate_with_openai_rubric
+from .simulation_service import run_single_simulation, create_test_summary_from_run_ids
+
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-def generate_reply_with_openai(company_name: str, input_email: str):
-    """
-    Kallar á OpenAI chat/completions og skilar (subject, body, latency_ms).
-    """
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
-    prompt = f"""
-You are a representative of {company_name}.
-Write a polite, professional reply to the following email:
-
-{input_email}
-"""
-
-    llm_t0 = time.time()
-    completion = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=500,
-        temperature=0.7,
-    )
-    llm_latency_ms = int((time.time() - llm_t0) * 1000)
-
-    generated_body = completion.choices[0].message.content
-
-    # Einföld subject-regla
-    model_name = "gpt-4.1-mini"
-    first_line = input_email.split("\n", 1)[0]
-    if first_line.lower().startswith("subject:"):
-        base_subject = first_line[len("Subject:"):].strip()
-        generated_subject = f"Re: {base_subject}"
-    else:
-        generated_subject = f"Response from {company_name}"
-
-    return generated_subject, generated_body, model_name, llm_latency_ms
-
-
-def evaluate_with_openai_rubric(
-    company_name: str,
-    scenario: str,
-    input_email: str,
-    generated_body: str,
-):
-    """
-    LLM-dómari sem GREFST EKKI ExpectedAnswer.
-    Skilar (grade_float, latency_ms) þar sem grade er 1–10.
-    """
-    start = time.time()
-
-    prompt = f"""
-You are a strict reviewer grading an automatic customer support email reply.
-
-COMPANY:
---------
-{company_name}
-
-SCENARIO:
----------
-{scenario}
-
-CUSTOMER EMAIL:
----------------
-{input_email}
-
-MODEL-GENERATED REPLY:
-----------------------
-{generated_body}
-
-TASK:
-Give a single numeric score from 1 to 10 indicating how good this reply is in terms of:
-- correctness and factual accuracy
-- helpfulness and clarity
-- tone and professionalism
-- whether it fully answers the customer’s request/complaint
-
-Respond ONLY with the number, for example: 7.5
-"""
-
-    resp = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=10,
-        temperature=0.0,
-    )
-
-    latency_ms = int((time.time() - start) * 1000)
-    text = resp.choices[0].message.content.strip()
-
-    m = re.search(r"(\d+(\.\d+)?)", text)
-    if not m:
-        raise ValueError(f"Could not parse grade from: {text!r}")
-
-    grade = float(m.group(1))
-    grade = max(1.0, min(10.0, grade))   # clamp 1–10
-
-    return grade, latency_ms
 
 #  Create tables if they don't exist
 Base.metadata.create_all(bind=engine)
@@ -488,167 +389,9 @@ def list_tests(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-SCENARIOS = [
-    "Subject: Inquiry about your products\nDear team, I would like to know more about your skincare line...",
-    "Subject: Complaint about delivery\nHello, my recent order arrived damaged...",
-    "Subject: Question about ingredients\nHi, can you tell me if your products are suitable for sensitive skin?"
-]
-
 class SimulateRequest(BaseModel):
     company_name: Optional[str] = None
     to: EmailStr
-
-from typing import Tuple
-
-def run_single_simulation(
-    to_email: str,
-    company_name: Optional[str] = None,
-) -> Tuple[EmailTestRun, int, int]:
-    """
-    Run ONE simulated email:
-    - choose company (given or random)
-    - choose scenario
-    - call OpenAI to generate reply
-    - grade it with LLM
-    - store EmailTestRun in DB
-    Returns: (EmailTestRun, total_latency_ms, llm_latency_ms)
-    """
-    db = SessionLocal()
-    try:
-        # 1) Choose company_name
-        if company_name:
-            chosen_company = company_name
-        else:
-            result = db.execute(
-                text('SELECT "CompanyName" FROM "Companies" ORDER BY RANDOM() LIMIT 1')
-            )
-            row = result.fetchone()
-            if not row:
-                raise HTTPException(status_code=400, detail="No companies available in database")
-            chosen_company = row[0]
-
-        # 2) Choose random scenario
-        input_email = random.choice(SCENARIOS)
-        scenario = input_email.split("\n", 1)[0].strip()
-
-        # 3) Call OpenAI
-        try:
-            generated_subject, generated_body, model_name, llm_latency_ms = generate_reply_with_openai(
-                company_name=chosen_company,
-                input_email=input_email,
-            )
-        except HTTPException:
-            # log failed run
-            test_run = EmailTestRun(
-                company_name=chosen_company,
-                scenario=scenario,
-                input_email=input_email,
-                generated_subject=None,
-                generated_body=None,
-                model_name="gpt-4.1-mini",
-                latency_ms=None,
-                sent_ok=False,
-            )
-            db.add(test_run)
-            db.commit()
-            db.refresh(test_run)
-            # re-raise for caller if needed
-            raise
-
-        sent_ok = False
-        send_latency_ms = 0
-        total_latency_ms = llm_latency_ms + send_latency_ms
-
-        # 4) Build EmailTestRun
-        test_run = EmailTestRun(
-            company_name=chosen_company,
-            scenario=scenario,
-            input_email=input_email,
-            generated_subject=generated_subject,
-            generated_body=generated_body,
-            model_name="gpt-4.1-mini",
-            latency_ms=total_latency_ms,
-            sent_ok=sent_ok,
-        )
-
-        # 5) Grade with LLM
-        try:
-            grade, eval_latency_ms = evaluate_with_openai_rubric(
-                company_name=chosen_company,
-                scenario=scenario,
-                input_email=input_email,
-                generated_body=generated_body,
-            )
-            test_run.reply_grade = grade
-        except Exception as e:
-            print(f"LLM grading failed: {e}")
-
-        # 6) Save
-        db.add(test_run)
-        db.commit()
-        db.refresh(test_run)
-
-        return test_run, total_latency_ms, llm_latency_ms
-
-    finally:
-        db.close()
-
-
-def generate_reply_with_openai(company_name: str, input_email: str):
-    """
-    Hjálparfall sem kallar á OpenAI og skilar:
-    (generated_subject, generated_body, model_name, llm_latency_ms)
-    """
-    from openai import OpenAI
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
-
-    client = OpenAI(api_key=api_key)
-    model_name = "gpt-4.1-mini"
-
-    prompt = f"""
-You are a representative of the company "{company_name}".
-
-You received the following email from a customer:
-
-{input_email}
-
-1) First, infer an appropriate email subject line.
-2) Then, write a professional, friendly email reply.
-
-Return your result in JSON with the fields:
-- subject
-- body
-"""
-
-    t0 = time.time()
-    resp = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.7,
-        max_tokens=600,
-    )
-    llm_latency_ms = int((time.time() - t0) * 1000)
-
-    content = resp.choices[0].message.content
-    import json
-    try:
-        parsed = json.loads(content)
-    except Exception:
-        raise HTTPException(status_code=500, detail="LLM returned invalid JSON")
-
-    generated_subject = parsed.get("subject", "").strip()
-    generated_body = parsed.get("body", "").strip()
-
-    if not generated_body:
-        raise HTTPException(status_code=500, detail="LLM did not return a body")
-
-    return generated_subject, generated_body, model_name, llm_latency_ms
 
 
 @app.post("/simulate-email")
@@ -658,7 +401,6 @@ def simulate_email(
     """
     Wrapper around run_single_simulation for the UI.
     """
-    # call the helper (sync)
     test_run, total_latency_ms, llm_latency_ms = run_single_simulation(
         to_email=body.to,
         company_name=body.company_name,
@@ -682,8 +424,6 @@ def simulate_email(
             "reply_grade": float(test_run.reply_grade) if test_run.reply_grade is not None else None,
         },
     }
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 class EvaluateRequest(BaseModel):
@@ -732,91 +472,6 @@ def evaluate_test_run(
         "evaluation_latency_ms": eval_latency_ms,
     }
 
-
-
-from typing import List
-
-class CreateTestFromRunsRequest(BaseModel):
-    run_ids: List[int]
-    concurrency_level: int = 1
-
-def create_test_summary_from_run_ids(
-    db: Session,
-    run_ids: List[int],
-    concurrency_level: int,
-):
-    if not run_ids:
-        raise HTTPException(status_code=400, detail="run_ids cannot be empty")
-
-    runs = (
-        db.query(EmailTestRun)
-        .filter(EmailTestRun.id.in_(run_ids))
-        .all()
-    )
-    if not runs:
-        raise HTTPException(status_code=404, detail="No EmailTestRuns found for given IDs")
-
-    companies = sorted({r.company_name for r in runs if r.company_name})
-    num_emails = len(runs)
-    total_requests = num_emails
-
-    grades = [float(r.reply_grade) for r in runs if r.reply_grade is not None]
-    avg_reply_grade = sum(grades) / len(grades) if grades else None
-
-    started_at = min(getattr(r, "created_at", datetime.utcnow()) for r in runs)
-    finished_at = max(getattr(r, "created_at", datetime.utcnow()) for r in runs)
-
-    companies_json = json.dumps(companies)
-
-    insert_sql = text("""
-        INSERT INTO tests (
-            companies,
-            num_emails,
-            concurrency_level,
-            started_at,
-            finished_at,
-            total_requests,
-            avg_reply_grade
-        )
-        VALUES (
-            :companies,
-            :num_emails,
-            :concurrency_level,
-            :started_at,
-            :finished_at,
-            :total_requests,
-            :avg_reply_grade
-        )
-        RETURNING test_id
-    """)
-
-    result = db.execute(
-        insert_sql,
-        {
-            "companies": companies_json,
-            "num_emails": num_emails,
-            "concurrency_level": concurrency_level,
-            "started_at": started_at,
-            "finished_at": finished_at,
-            "total_requests": total_requests,
-            "avg_reply_grade": avg_reply_grade,
-        },
-    )
-    db.commit()
-    new_test_id = result.fetchone()[0]
-
-    return {
-        "status": "ok",
-        "test_id": new_test_id,
-        "companies": companies,
-        "num_emails": num_emails,
-        "concurrency_level": concurrency_level,
-        "total_requests": total_requests,
-        "avg_reply_grade": avg_reply_grade,
-        "started_at": started_at.isoformat(),
-        "finished_at": finished_at.isoformat(),
-    }
-
 import asyncio
 
 @app.post("/run-simulated-test")
@@ -824,11 +479,6 @@ async def run_simulated_test(
     body: RunTestRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Run num_emails simulations with given concurrency_level.
-    Uses run_single_simulation() in parallel and then creates
-    one summary row in tests.
-    """
     if body.num_emails <= 0:
         raise HTTPException(status_code=400, detail="num_emails must be > 0")
     if body.concurrency_level <= 0:
@@ -837,7 +487,6 @@ async def run_simulated_test(
     semaphore = asyncio.Semaphore(body.concurrency_level)
 
     async def run_one():
-        # bound concurrency with semaphore, then run sync code in thread
         async with semaphore:
             test_run, _, _ = await asyncio.to_thread(
                 run_single_simulation,
@@ -846,20 +495,21 @@ async def run_simulated_test(
             )
             return test_run.id
 
-    # create tasks
     tasks = [run_one() for _ in range(body.num_emails)]
     run_ids = await asyncio.gather(*tasks)
 
-    # create summary in tests table using the helper
     summary = create_test_summary_from_run_ids(
         db=db,
         run_ids=list(run_ids),
         concurrency_level=body.concurrency_level,
     )
-
-    # include run_ids in the response for debugging if you like
     summary["run_ids"] = list(run_ids)
     return summary
+
+class CreateTestFromRunsRequest(BaseModel):
+    run_ids: List[int]
+    concurrency_level: int = 1
+
 
 @app.post("/tests/from-runs")
 def create_test_from_runs(

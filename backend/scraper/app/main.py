@@ -6,14 +6,14 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime
 import json
-import random  # ef þú notar það annars staðar
+import random  
 import os
 
 from app.scraper import scrape_company
 from app.database import SessionLocal, engine
 from .models import Company, EmailSent, Base, EmailTestRun
 from .email_service import get_email_service
-from .llm_service import evaluate_with_openai_rubric
+from .llm_service import generate_reply_with_openai, evaluate_with_openai_rubric
 from .simulation_service import run_single_simulation, create_test_summary_from_run_ids
 
 
@@ -68,6 +68,11 @@ class RunTestRequest(BaseModel):
     concurrency_level: int = 1
     to: EmailStr
     company_name: Optional[str] = None  # if None → random
+
+class ManualGenerateRequest(BaseModel):
+    company_name: str       # verður að velja company í UI
+    to: EmailStr            # recipient (má nota sama og í Email Settings)
+    input_email: str        # textinn úr textboxinu
 
 # DB dependency
 def get_db():
@@ -387,6 +392,77 @@ def list_tests(
         import traceback
         print("[ERROR] /tests handler exception:\n", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/manual-generate")
+def manual_generate_email(
+    body: ManualGenerateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Tekur 'Mock Email to Respond To' frá UI, býr til svar með LLM,
+    vistar í EmailTestRuns og býr til tests-row með num_emails=1.
+    """
+    input_email = body.input_email.strip()
+    if not input_email:
+        raise HTTPException(status_code=400, detail="input_email is empty")
+
+    company_name = body.company_name
+
+    # 1) Scenario: notum fyrstu línu (t.d. "Subject: ...")
+    first_line = input_email.splitlines()[0].strip()
+    scenario = first_line or "Manual scenario"
+
+    # 2) LLM svar
+    generated_subject, generated_body, model_name, llm_latency_ms = generate_reply_with_openai(
+        company_name=company_name,
+        input_email=input_email,
+    )
+    total_latency_ms = llm_latency_ms
+
+    # 3) Búa til EmailTestRun
+    test_run = EmailTestRun(
+        company_name=company_name,
+        scenario=scenario,
+        input_email=input_email,
+        generated_subject=generated_subject,
+        generated_body=generated_body,
+        model_name=model_name,
+        latency_ms=total_latency_ms,
+        sent_ok=False,   # við erum bara að generate-a, ekki senda raunpóst hér
+    )
+
+    # 4) LLM dómari – gefur einkunn
+    try:
+        grade, eval_latency_ms = evaluate_with_openai_rubric(
+            company_name=company_name,
+            scenario=scenario,
+            input_email=input_email,
+            generated_body=generated_body,
+        )
+        test_run.reply_grade = grade
+    except Exception as e:
+        print(f"LLM grading failed (manual_generate): {e}")
+
+    db.add(test_run)
+    db.commit()
+    db.refresh(test_run)
+
+    # 5) Búa til tests-row eins og þetta sé batch með einu email
+    summary = create_test_summary_from_run_ids(
+        db=db,
+        run_ids=[test_run.id],
+        concurrency_level=1,
+    )
+
+    return {
+        "status": "ok",
+        "test_run_id": test_run.id,
+        "test_summary": summary,
+        "generated_subject": generated_subject,
+        "generated_body": generated_body,
+        "grade": float(test_run.reply_grade) if test_run.reply_grade is not None else None,
+    }
+
 
 
 class SimulateRequest(BaseModel):

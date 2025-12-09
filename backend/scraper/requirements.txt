@@ -1,6 +1,20 @@
 fastapi
-uvicorn
-requests
-beautifulsoup4
+uvicorn[standard]
+
+# Database + ORM
+SQLAlchemy>=2.0
 cloud-sql-python-connector[pg8000]
 pg8000
+
+# HTML scraping
+beautifulsoup4
+requests
+
+# OpenAI client
+openai>=1.0.0
+
+# Pydantic (FastAPI notar Pydantic v1 eða v2 eftir útgáfu)
+pydantic
+
+# Async helpers
+anyio

@@ -39,7 +39,7 @@ function TestDetailsModal({ test, onClose }) {
         <p>
           <strong>Average reply grade:</strong>{" "}
           {test.avg_reply_grade != null
-            ? `${(test.avg_reply_grade * 100).toFixed(1)} %`
+            ? `${(test.avg_reply_grade*10).toFixed(1)} %`
             : "N/A"}
         </p>
       </div>

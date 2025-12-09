@@ -3,6 +3,8 @@ import styles from "./Test.module.css";
 import Input from "../components/Input.js";
 import { fetchCompanies } from "../api/scraper";
 
+
+
 export default function TestPage() {
   const [companies, setCompanies] = useState([]);
   const [selectedId, setSelectedId] = useState("");
@@ -25,10 +27,15 @@ export default function TestPage() {
   const [sendingEmail, setSendingEmail] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [autoSend, setAutoSend] = useState(true);
+  const [generatedSubject, setGeneratedSubject] = useState("");
+  const [generatedBody, setGeneratedBody] = useState("");
+  const [generatedGrade, setGeneratedGrade] = useState(null);
+
 
   const [numRequests, setNumRequests] = useState(10);
   const [isTesting, setIsTesting] = useState(false);
   const [useRandomCompany, setUseRandomCompany] = useState(false);
+  const [selectedConcurrency, setSelectedConcurrency] = useState(1);
 
   // Helper function to detect if email is for a different company
   function appearsToBeForOtherCompany(emailText, companyName) {
@@ -375,11 +382,7 @@ IMPORTANT:
       return;
     }
 
-    if (!openaiKey) {
-      alert("Please enter your OpenAI API key first");
-      return;
-    }
-
+    // openaiKey er ekki lengur notað á frontend
     if (autoSend && !recipientEmail) {
       alert("Auto-send is enabled. Please enter a recipient email address");
       return;
@@ -390,32 +393,91 @@ IMPORTANT:
 
     try {
       addToLog(`Generating response for ${selected.name}...`);
-      
-      const response = await generateEmailWithOpenAI(selected, mockEmail);
-      setEmailResponse(response);
-      
-      addToLog(`✅ Response generated for ${selected.name}`);
-      
-      const isForOtherCompany = appearsToBeForOtherCompany(mockEmail, selected.name);
-      if (isForOtherCompany) {
-        addToLog(`Note: Email appears to be directed at a different company. Response will clarify this.`);
+
+      // 1) Kalla á backend: /manual-generate
+      const resp = await fetch("https://backend-737530900569.europe-west2.run.app/manual-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company_name: selected.name,
+          to: recipientEmail || "test@example.com", // notað bara sem metadata
+          input_email: mockEmail,
+        }),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`HTTP ${resp.status}: ${text}`);
       }
 
-      // If auto-send is enabled, send the email immediately
-      if (autoSend && recipientEmail) {
+      const data = await resp.json();
+      const body = data.generated_body || "";
+      const subject = data.generated_subject || "";
+      const grade = data.grade;
+
+      // birtum svarið í UI
+      setEmailResponse(body);
+
+      // logg um gæði + test
+      const gradeText =
+        grade != null ? (grade * 10).toFixed(1) + " %" : "N/A";
+      addToLog(
+        `✅ Response generated for ${selected.name} (grade: ${gradeText})`
+      );
+
+      if (data.test_summary?.test_id) {
+        addToLog(
+          `Stored as Test #${data.test_summary.test_id} in history (1 email, concurrency 1).`
+        );
+      }
+
+      const isForOtherCompany = appearsToBeForOtherCompany(
+        mockEmail,
+        selected.name
+      );
+      if (isForOtherCompany) {
+        addToLog(
+          `Note: Email appears to be directed at a different company. Response will clarify this.`
+        );
+      }
+
+      // 2) Ef auto-send er virkt → kalla á /send-email
+      if (autoSend && recipientEmail && body) {
         addToLog(`Auto-sending email to ${recipientEmail}...`);
-        const sendResult = await sendGeneratedEmail(response);
-        
-        if (sendResult.success) {
-          addToLog(`✅ Email successfully sent to ${recipientEmail}`);
+
+        const sendResp = await fetch("https://backend-737530900569.europe-west2.run.app/send-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: recipientEmail,
+            subject: subject || "Response",
+            content: body,
+            company_name: selected.name,
+          }),
+        });
+
+        if (!sendResp.ok) {
+          const text = await sendResp.text();
+          addToLog(
+            `⚠️ Generated response ready, but email sending failed: HTTP ${sendResp.status}: ${text}`
+          );
         } else {
-          addToLog(`⚠️ Generated response ready, but email sending failed: ${sendResult.error}`);
+          const sendData = await sendResp.json();
+          if (sendData.success) {
+            addToLog(`✅ Email successfully sent to ${recipientEmail}`);
+          } else {
+            addToLog(
+              `⚠️ Generated response ready, but email sending failed: ${
+                sendData.error || "Unknown error"
+              }`
+            );
+          }
         }
       } else if (!autoSend) {
-        addToLog("✅ Response generated and ready to send.");
-        addToLog("Note: Auto-send is disabled. You can manually send this email using the 'Send Email' button.");
+        addToLog(
+          "✅ Response generated and stored (EmailTestRuns/tests). Auto-send is disabled."
+        );
       }
-      
     } catch (error) {
       console.error("Error generating response:", error);
       setEmailResponse(`Error: ${error.message}`);
@@ -424,6 +486,7 @@ IMPORTANT:
       setGeneratingResponse(false);
     }
   }
+
 
   // Manual send function for when auto-send is disabled
   async function sendEmailManually() {
@@ -447,65 +510,83 @@ IMPORTANT:
   }
 
   async function runSimulatedTest() {
-    // Ef notandi vill EKKI random company, þá þarf valið company
-    if (!useRandomCompany && !selected) {
-      alert("Please select a company or enable Random company");
-      return;
-    }
-    if (!recipientEmail) {
-      alert("Settu inn móttakanda (recipient email) fyrst");
-      return;
-    }
-    if (numRequests <= 0) {
-      alert("Number of requests must be > 0");
-      return;
+  if (!useRandomCompany && !selected) {
+    alert("Please select a company or enable Random company");
+    return;
+  }
+  if (!recipientEmail) {
+    alert("Settu inn móttakanda (recipient email) fyrst");
+    return;
+  }
+  if (numRequests <= 0) {
+    alert("Number of requests must be > 0");
+    return;
+  }
+
+  setIsTesting(true);
+  addToLog(
+    `Starting simulated test for ${
+      useRandomCompany ? "RANDOM companies" : selected.name
+    } (${numRequests} requests, concurrency ${selectedConcurrency})...`
+  );
+
+  try {
+    // Build payload for /run-simulated-test
+    const payload = {
+      num_emails: numRequests,
+      concurrency_level: selectedConcurrency,       // e.g. 1, 5, 10…
+      to: recipientEmail,
+    };
+
+    // Only send company_name if *not* random
+    if (!useRandomCompany && selected?.name) {
+      payload.company_name = selected.name;
     }
 
-    setIsTesting(true);
+    const resp = await fetch("https://backend-737530900569.europe-west2.run.app/run-simulated-test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
+
+    const summary = await resp.json();
+
+    const companies = Array.isArray(summary.companies)
+      ? summary.companies.join(", ")
+      : "N/A";
+
+    // avg_reply_grade is 0–10 in your backend; *10 → percent
+    const avgGrade =
+      summary.avg_reply_grade != null
+        ? (summary.avg_reply_grade * 10).toFixed(1) + " %"
+        : "N/A";
+
     addToLog(
-      `Starting simulated test for ${
-        useRandomCompany ? "RANDOM companies" : selected.name
-      } (${numRequests} requests)...`
+      `✅ Batch Test #${summary.test_id} created – companies: ${companies}, ` +
+        `total_requests: ${summary.total_requests}, ` +
+        `concurrency: ${summary.concurrency_level}, avg grade: ${avgGrade}`
     );
 
-    try {
-    for (let i = 1; i <= numRequests; i++) {
-      // byggjum body eftir því hvort við erum að nota random company eða ekki
-      const body = useRandomCompany
-        ? {
-            to: recipientEmail,
-          }
-        : {
-            company_name: selected.name,
-            to: recipientEmail,
-          };
+    // If you want, you can also log run_ids if you return them from backend:
+    // addToLog(`Run IDs: ${summary.run_ids.join(", ")}`);
 
-      const resp = await fetch("https://backend-737530900569.europe-west2.run.app/simulate-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+    // Optionally refresh your History view here if this page owns that:
+    // await loadHistory();
 
-      const data = await resp.json();
-      const latency = data.latency_ms ?? "n/a";
-      const companyUsed = data.company_used || body.company_name || "unknown";
-
-      addToLog(
-        `Run #${i}: status=${data.status}, company=${companyUsed}, latency=${latency} ms`
-      );
-
-      // smá delay svo þetta sé ekki alveg spam (valfrjálst)
-      // await new Promise(res => setTimeout(res, 200));
-    }
-
-    addToLog("✅ Simulated test finished");
-    } catch (err) {
-      console.error(err);
-      addToLog(`❌ Error during simulated test: ${err.message}`);
-    } finally {
-      setIsTesting(false);
-    }
+  } catch (err) {
+    console.error(err);
+    addToLog(`❌ Error during simulated test: ${err.message}`);
+  } finally {
+    setIsTesting(false);
   }
+}
+
+
   
 
   function addToLog(message) {
@@ -628,11 +709,11 @@ IMPORTANT:
                 onChange={(e) => setMockEmail(e.target.value)}
                 placeholder="Paste or type the email you want to respond to...
                 
-Example:
-Subject: Inquiry about your services
-Dear Team,
+                          Example:
+                          Subject: Inquiry about your services
+                          Dear Team,
 
-I'm interested in learning more about your products..."
+                          I'm interested in learning more about your products..."
 
                 rows={8}
               />
@@ -645,7 +726,7 @@ I'm interested in learning more about your products..."
               <button
                 className={styles.respondBtn}
                 onClick={generateEmailResponse}
-                disabled={generatingResponse || !selected || !mockEmail.trim() || !openaiKey || (autoSend && !recipientEmail)}
+                disabled={generatingResponse || !selected || !mockEmail.trim() || (autoSend && !recipientEmail)}
               >
                 {generatingResponse ? "Generating Response..." : "Generate & Send Response"}
               </button>
@@ -701,6 +782,14 @@ I'm interested in learning more about your products..."
               value={numRequests}
               onChange={(v) => setNumRequests(Number(v) || 0)}
             />
+            <Input
+              label="Concurrency level"
+              type="number"
+              min={1}
+              max={50}
+              value={selectedConcurrency}
+              onChange={(v) => setSelectedConcurrency(Number(v) || 1)}
+            />
 
             <label className={styles.checkRow}>
               <input
@@ -726,6 +815,9 @@ I'm interested in learning more about your products..."
             company from the database each time.
           </small>
         </div>
+        <label>Concurrency level</label>
+        
+
 
 
         {/* Log Settings and Output */}
